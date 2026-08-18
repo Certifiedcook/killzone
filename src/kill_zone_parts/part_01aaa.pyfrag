@@ -1,0 +1,45 @@
+from __future__ import annotations
+
+import heapq
+import json
+import math
+import os
+import random
+import sys
+import threading
+import time
+import urllib.request
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+try:
+    import pygame
+except ImportError:
+    pygame = None
+
+# =============================================================================
+# KILL ZONE — REALTIME TACTICAL INFANTRY SANDBOX
+# =============================================================================
+# This build deliberately uses a deterministic fixed-step simulation underneath
+# a smooth pygame presentation. It is real-time: movement, aiming, reloads,
+# suppression, reactions, bleeding, smoke, fire, AI and support weapons all
+# continue simultaneously.
+# =============================================================================
+
+APP_TITLE = "KILL ZONE — Realtime Tactical Infantry"
+TILE = 28
+MAP_W, MAP_H = 39, 24
+MAP_X, MAP_Y = 18, 66
+SIDEBAR_X = MAP_X + MAP_W * TILE + 18
+WINDOW_W, WINDOW_H = SIDEBAR_X + 320, 790
+FPS = 60
+SIM_DT = 1 / 30
+Coord = Tuple[int, int]
+
+COLORS = {
+    "bg": (25, 29, 25), "panel": (42, 47, 40), "panel2": (55, 60, 51),
+    "text": (222, 222, 198), "muted": (153, 157, 141), "white": (242, 242, 225),
+    "black": (16, 17, 15), "select": (229, 210, 119), "player": (89, 145, 91),
+    "enemy": (170, 73, 65), "objective": (212, 167, 74), "danger": (217, 91, 80),
+    "good": (132, 175, 112), "contact": (220, 187, 107), "blue": (104, 145, 177),
