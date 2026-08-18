@@ -109,6 +109,7 @@ def test_coordinated_advance():
 
 def test_long_simulation():
     g=kz.RealTimeGame(seed=222,difficulty='Veteran')
+    # force the player formation to advance toward the defenders, then let both AIs/fire systems run.
     ps=[u for u in g.living('player') if u.combat_effective]
     g.issue_move(ps,(kz.MAP_W-14,kz.MAP_H//2),mode='safe')
     step(g,35)
@@ -147,6 +148,7 @@ def test_window_and_wood_penetration():
     g.set_cell(4,4,'woodwall');assert g.hit_chance(a,b)>0
 
 
+
 def test_formation_offsets_and_group_move():
     g=fresh(18)
     us=[g.add_unit('player','Rifleman',2,2+i) for i in range(4)]
@@ -163,6 +165,7 @@ def test_command_queue_executes():
     g.queue_fire(u,e.uid,'normal')
     assert len(u.command_queue)==1
     step(g,2.5)
+    # Move should complete, queued fire should have been issued/consumed.
     assert not u.command_queue
     assert u.ammo<kz.WEAPONS[u.weapon_name]['mag'] or u.order in ('fire','idle')
 
@@ -188,6 +191,7 @@ def test_bounding_overwatch_starts_in_bounds():
 def test_last_known_intel_does_not_track_hidden_target():
     g=fresh(22);o=g.add_unit('enemy','Recon',2,2);p=g.add_unit('player','Rifleman',6,2)
     g.update_spotting();info=dict(g.intel['enemy'][p.uid]);old=info['pos']
+    # hard blocker removes LOS, then the player relocates out of sight
     g.set_cell(4,2,'wall');p.x,p.y=8,2;g.time+=1;g.update_spotting()
     assert g.intel['enemy'][p.uid]['pos']==old, (g.intel['enemy'][p.uid]['pos'],old)
 
