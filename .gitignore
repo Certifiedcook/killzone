@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.DS_Store
+Thumbs.db
+
+# Optional CC0 media is downloaded at runtime from the documented sources.
+assets/audio/*
+assets/fx/*
