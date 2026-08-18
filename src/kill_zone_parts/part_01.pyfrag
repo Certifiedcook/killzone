@@ -73,8 +73,8 @@ TERRAIN: Dict[str, dict] = {
     "water":    {"cover": 0, "move": 999,  "blocks": True,  "conceal": 0,  "height": -1,"hp": None, "pen": 0},
     "bridge":   {"cover": 0, "move": 0.95, "blocks": False, "conceal": 0,  "height": 0, "hp": 70, "pen": 1},
     "building": {"cover": 5, "move": 999,  "blocks": True,  "conceal": 0,  "height": 1, "hp": 105,"pen": 4},
-    "woodwall": {"cover": 4, "move": 999,  "blocks": False, "conceal": 0,  "height": 1, "hp": 55, "pen": 3},
-    "window":   {"cover": 4, "move": 999,  "blocks": False, "conceal": 2,  "height": 1, "hp": 30, "pen": 1},
+    "woodwall": {"cover": 4, "move": 999, "blocks": False, "conceal": 0,  "height": 1, "hp": 55, "pen": 3},
+    "window":   {"cover": 4, "move": 999, "blocks": False, "conceal": 2,  "height": 1, "hp": 30, "pen": 1},
     "door":     {"cover": 2, "move": 1.00, "blocks": False, "conceal": 2,  "height": 0, "hp": 35, "pen": 1},
     "dugout":   {"cover": 5, "move": 0.82, "blocks": False, "conceal": 22, "height": -1, "hp": 110, "pen": 3},
     "firing_step":{"cover": 4, "move": 0.74, "blocks": False, "conceal": 8, "height": -1, "hp": None, "pen": 0},
@@ -117,6 +117,17 @@ DIFFICULTY = {
     "Hard": {"enemy": 10, "acc": 1, "ai": 0.38},
     "Veteran": {"enemy": 13, "acc": 7, "ai": 0.22},
 }
+
+PLAYER_ROLE_ORDER = [
+    "Rifleman", "Machine Gunner", "Sniper", "Medic", "Engineer", "Recon",
+    "Grenadier", "Assault", "Automatic Rifleman", "Marksman", "HMG Crew", "Mortar Team",
+]
+DEFAULT_PLAYER_ROSTER = [
+    "Rifleman", "Rifleman", "Machine Gunner", "Sniper", "Medic", "Engineer",
+    "Recon", "Grenadier", "Assault", "Automatic Rifleman", "Marksman", "HMG Crew", "Mortar Team",
+]
+MAX_PLAYER_UNITS = 16
+MAX_ROLE_COUNT = 8
 
 BASE_DIR = Path(__file__).resolve().parent
 ASSET_DIR = BASE_DIR / "assets"
@@ -299,7 +310,7 @@ class Unit:
     peek_until: float = 0.0
     rally_shock: float = 0.0
     momentum: float = 0.0
-    fire_discipline: str = "return"  # hold / return / free / confident
+    fire_discipline: str = "free"  # hold / return / free / confident
     target_priority: str = "specialist"  # nearest / exposed / specialist / suppressed
     command_queue: List[Tuple[str, object]] = field(default_factory=list)
     under_fire_until: float = 0.0
@@ -327,11 +338,28 @@ class Unit:
 
 
 class RealTimeGame:
-    def __init__(self, seed: Optional[int] = None, difficulty: str = "Hard"):
+    def __init__(self, seed: Optional[int] = None, difficulty: str = "Hard", player_roster: Optional[List[str]] = None):
         self.seed = seed if seed is not None else random.randint(100000, 999999)
+        cleaned_roster = [r for r in (player_roster or DEFAULT_PLAYER_ROSTER) if r in ROLES][:MAX_PLAYER_UNITS]
+        self.player_roster = cleaned_roster or ["Rifleman"]
         self.rng = random.Random(self.seed)
         self.difficulty = difficulty
         self.time = 0.0
         self.grid = [[Cell() for _ in range(MAP_W)] for _ in range(MAP_H)]
         self.units: List[Unit] = []
         self.explosions: List[Explosion] = []
+        self.tracers: List[Tracer] = []
+        self.blood: List[BloodDecal] = []
+        self.events: List[dict] = []
+        self.bounding_orders: List[BoundingOrder] = []
+        self.intel = {"player": {}, "enemy": {}}
+        self.log: List[str] = []
+        self.next_uid = 1
+        self.weather = self.rng.choice(["clear", "clear", "rain", "fog"])
+        self.wind = self.rng.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
+        self.support = {"player_HE": 2, "player_SMOKE": 2, "enemy_HE": 1, "enemy_SMOKE": 1}
+        self.victory = False
+        self.defeat = False
+        self.paused = False
+        self._spot_timer = 0.0
+        self._world_timer = 0.0
