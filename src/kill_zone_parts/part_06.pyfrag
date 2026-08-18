@@ -11,18 +11,24 @@ class KillZoneApp:
     def __init__(self):
         pygame.init()
         pygame.display.set_caption(APP_TITLE)
-        self.screen=pygame.display.set_mode((WINDOW_W,WINDOW_H))
+        self.fullscreen=False
+        self.screen=None
+        self.apply_display_mode()
         self.clock=pygame.time.Clock()
         self.fonts={s:pygame.font.SysFont("consolas",s,bold=(s>=20)) for s in (12,14,16,20,26,36,48,60)}
         bootstrap_assets_async()
         self.game=RealTimeGame()
-        self.state="menu"  # menu / setup / settings / game
+        self.state="menu"  # menu / setup / settings / help / game
         self.battle_active=False
         self.setup_difficulty="Hard"
+        self.setup_roster={role:DEFAULT_PLAYER_ROSTER.count(role) for role in PLAYER_ROLE_ORDER}
+        self.battle_roster=list(DEFAULT_PLAYER_ROSTER)
         self.menu_speed=1.0
         self.menu_show_help=True
+        self.show_fps=False
         self.selected:List[int]=[]
         self.drag_start:Optional[Tuple[int,int]]=None
+        self.drag_additive=False
         self.mouse=(0,0)
         self.running=True
         self.accum=0.0
@@ -39,6 +45,32 @@ class KillZoneApp:
         self.asset_refresh_at=0.0
         self.message="LMB select • RMB order • ` tactical slow • F1 help"
         self.init_presentation_assets()
+
+    def apply_display_mode(self):
+        flags=0
+        if self.fullscreen:
+            flags=pygame.FULLSCREEN | getattr(pygame,"SCALED",0)
+        try:
+            self.screen=pygame.display.set_mode((WINDOW_W,WINDOW_H),flags)
+        except pygame.error:
+            # Some drivers dislike SCALED+FULLSCREEN; fall back cleanly rather than crashing.
+            if self.fullscreen:
+                try:
+                    self.screen=pygame.display.set_mode((WINDOW_W,WINDOW_H),pygame.FULLSCREEN)
+                    return
+                except pygame.error:
+                    self.fullscreen=False
+            self.screen=pygame.display.set_mode((WINDOW_W,WINDOW_H))
+
+    def toggle_fullscreen(self):
+        self.fullscreen=not self.fullscreen
+        self.apply_display_mode()
+
+    def current_setup_roster(self) -> List[str]:
+        roster=[]
+        for role in PLAYER_ROLE_ORDER:
+            roster.extend([role]*self.setup_roster.get(role,0))
+        return roster[:MAX_PLAYER_UNITS]
 
     def init_presentation_assets(self):
         try:
@@ -98,38 +130,61 @@ class KillZoneApp:
     def main_menu_rects(self):
         w,h=300,54
         x=WINDOW_W//2-w//2
-        y=330
+        y=292
         rects={}
         if self.battle_active:
-            rects["continue"]=pygame.Rect(x,y,w,h);y+=68
-        rects["play"]=pygame.Rect(x,y,w,h);y+=68
-        rects["settings"]=pygame.Rect(x,y,w,h);y+=68
+            rects["continue"]=pygame.Rect(x,y,w,h);y+=64
+        rects["play"]=pygame.Rect(x,y,w,h);y+=64
+        rects["settings"]=pygame.Rect(x,y,w,h);y+=64
+        rects["help"]=pygame.Rect(x,y,w,h);y+=64
         rects["quit"]=pygame.Rect(x,y,w,h)
         return rects
 
     def setup_rects(self):
         x=WINDOW_W//2-330
         return {
-            "easy":pygame.Rect(x,350,200,54),
-            "hard":pygame.Rect(x+230,350,200,54),
-            "veteran":pygame.Rect(x+460,350,200,54),
-            "start":pygame.Rect(WINDOW_W//2-150,470,300,58),
-            "back":pygame.Rect(WINDOW_W//2-150,548,300,50),
+            "easy":pygame.Rect(x,170,200,48),
+            "hard":pygame.Rect(x+230,170,200,48),
+            "veteran":pygame.Rect(x+460,170,200,48),
+            "balanced":pygame.Rect(WINDOW_W//2-310,650,190,44),
+            "clear":pygame.Rect(WINDOW_W//2-95,650,190,44),
+            "start":pygame.Rect(WINDOW_W//2+120,650,190,44),
+            "back":pygame.Rect(WINDOW_W//2-95,708,190,42),
         }
+
+    def roster_rects(self):
+        rects={}
+        left=84;right=WINDOW_W//2+30;top=282;row_h=55
+        for i,role in enumerate(PLAYER_ROLE_ORDER):
+            col=0 if i<6 else 1;row=i if i<6 else i-6
+            x=left if col==0 else right;y=top+row*row_h
+            rects[(role,"minus")]=pygame.Rect(x+440,y+6,36,34)
+            rects[(role,"plus")]=pygame.Rect(x+526,y+6,36,34)
+        return rects
 
     def settings_rects(self):
         x=WINDOW_W//2-330
         return {
-            "speed05":pygame.Rect(x,365,200,50),
-            "speed1":pygame.Rect(x+230,365,200,50),
-            "speed2":pygame.Rect(x+460,365,200,50),
-            "help":pygame.Rect(WINDOW_W//2-150,455,300,52),
-            "audio":pygame.Rect(WINDOW_W//2-150,520,300,52),
-            "back":pygame.Rect(WINDOW_W//2-150,600,300,50),
+            "speed05":pygame.Rect(x,275,200,48),
+            "speed1":pygame.Rect(x+230,275,200,48),
+            "speed2":pygame.Rect(x+460,275,200,48),
+            "help":pygame.Rect(WINDOW_W//2-165,365,330,46),
+            "audio":pygame.Rect(WINDOW_W//2-165,423,330,46),
+            "fps":pygame.Rect(WINDOW_W//2-165,481,330,46),
+            "fullscreen":pygame.Rect(WINDOW_W//2-165,539,330,46),
+            "back":pygame.Rect(WINDOW_W//2-150,620,300,48),
         }
 
+    def help_menu_rects(self):
+        return {"back":pygame.Rect(WINDOW_W//2-150,710,300,46)}
+
     def start_battle(self):
-        self.game=RealTimeGame(difficulty=self.setup_difficulty)
+        roster=self.current_setup_roster()
+        if not roster:
+            self.message="Choose at least one unit before starting."
+            return
+        self.battle_roster=list(roster)
+        self.game=RealTimeGame(difficulty=self.setup_difficulty,player_roster=roster)
         self.selected=[]
         self.command_mode="normal"
         self.cook=0.0
@@ -158,6 +213,8 @@ class KillZoneApp:
                 self.state="setup"
             elif name=="settings":
                 self.state="settings"
+            elif name=="help":
+                self.state="help"
             elif name=="quit":
                 self.running=False
             return
@@ -168,10 +225,21 @@ class KillZoneApp:
         if e.type==pygame.KEYDOWN and e.key==pygame.K_ESCAPE:
             self.state="menu";return
         if e.type!=pygame.MOUSEBUTTONDOWN or e.button!=1:return
+        total=sum(self.setup_roster.values())
+        for (role,action),r in self.roster_rects().items():
+            if not r.collidepoint(e.pos):continue
+            count=self.setup_roster.get(role,0)
+            if action=="minus" and count>0:self.setup_roster[role]=count-1
+            elif action=="plus" and count<MAX_ROLE_COUNT and total<MAX_PLAYER_UNITS:self.setup_roster[role]=count+1
+            return
         for name,r in self.setup_rects().items():
             if not r.collidepoint(e.pos):continue
             if name in ("easy","hard","veteran"):
                 self.setup_difficulty=name.title()
+            elif name=="balanced":
+                self.setup_roster={role:DEFAULT_PLAYER_ROSTER.count(role) for role in PLAYER_ROLE_ORDER}
+            elif name=="clear":
+                self.setup_roster={role:0 for role in PLAYER_ROLE_ORDER}
             elif name=="start":
                 self.start_battle()
             elif name=="back":
@@ -191,8 +259,18 @@ class KillZoneApp:
             elif name=="speed2":self.menu_speed=2.0
             elif name=="help":self.menu_show_help=not self.menu_show_help
             elif name=="audio":self.audio_enabled=not self.audio_enabled
+            elif name=="fps":self.show_fps=not self.show_fps
+            elif name=="fullscreen":self.toggle_fullscreen()
             elif name=="back":self.state="menu"
             return
+
+    def handle_help_menu_event(self,e):
+        if e.type==pygame.QUIT:
+            self.running=False;return
+        if e.type==pygame.KEYDOWN and e.key in (pygame.K_ESCAPE,pygame.K_F1):
+            self.state="menu";return
+        if e.type==pygame.MOUSEBUTTONDOWN and e.button==1 and self.help_menu_rects()["back"].collidepoint(e.pos):
+            self.state="menu"
 
     def map_cell_from_mouse(self,pos) -> Optional[Coord]:
         mx,my=pos
@@ -342,3 +420,4 @@ class KillZoneApp:
         elif key==pygame.K_x:
             for u in us:self.game.cycle_move_mode(u)
         elif key==pygame.K_a:
+            for u in us:u.fire_mode="aimed";u.order="idle";u.aim_progress=0
