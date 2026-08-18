@@ -1,0 +1,292 @@
+        u.order="deploy" if not u.deployed else "pack"
+
+    def set_overwatch(self,u:Unit,center:float,width=90):
+        u.overwatch=True; u.fire_lane=False; u.fire_lane_center=center; u.arc_width=width
+        u.arc_range=min(u.weapon["range"],12); u.order="overwatch"
+
+    def set_fire_lane(self,u:Unit,center:float,width=45):
+        if u.role not in ("Machine Gunner","HMG Crew"): return
+        if not u.deployed: self.toggle_deploy(u); return
+        u.fire_lane=True; u.overwatch=False; u.fire_lane_center=center; u.arc_width=width; u.arc_range=u.weapon["range"]; u.order="fire_lane"
+
+    def suppress_area(self,u:Unit,pos:Tuple[float,float]):
+        if u.role not in ("Machine Gunner","HMG Crew","Automatic Rifleman"): return
+        u.order="suppress"; u.target_pos=pos; u.target_uid=None
+
+    def throw_grenade(self,u:Unit,pos:Tuple[float,float],smoke=False,cook=0.0,rifle=False):
+        if dist(u.pos,pos)> (7 if rifle else 4.5): return
+        if smoke:
+            if u.smoke_grenades<=0:return
+            u.smoke_grenades-=1; fuse=max(.5,1.5-cook)
+            self.explosions.append(Explosion(pos[0],pos[1],fuse,2.3,0,0,"SMOKE",u.faction))
+        elif rifle:
+            if u.rifle_grenades<=0:return
+            u.rifle_grenades-=1; fuse=.8
+            self.explosions.append(Explosion(pos[0],pos[1],fuse,2.0,62,58,"HE",u.faction))
+        else:
+            if u.grenades<=0:return
+            u.grenades-=1; fuse=max(.35,2.4-cook)
+            self.explosions.append(Explosion(pos[0],pos[1],fuse,2.0,72,68,"HE",u.faction))
+        u.action_timer=.8; u.signature=max(u.signature,10)
+        self.grenade_reaction(pos,u.faction)
+
+    def grenade_reaction(self,pos,faction):
+        for u in self.living():
+            if not u.combat_effective or dist(u.pos,pos)>2.5: continue
+            if u.suppression>=80 or u.action_timer>0: continue
+            # auto dive away: useful but not guaranteed.
+            if self.rng.random()<.68:
+                ux,uy=u.tile
+                candidates=[]
+                for nx,ny in ((ux+1,uy),(ux-1,uy),(ux,uy+1),(ux,uy-1)):
+                    if self.passable(nx,ny,u): candidates.append((dist((nx,ny),pos),(nx,ny)))
+                if candidates:
+                    _,best=max(candidates)
+                    u.waypoints=[best];u.path=[];u.order="move";u.stance="prone"
+
+    def place_satchel(self,u:Unit,pos:Coord):
+        if u.satchel<=0 or dist(u.pos,pos)>1.5:return
+        u.satchel-=1;u.action_timer=2.0
+        self.explosions.append(Explosion(pos[0],pos[1],3.0,2.7,130,95,"HE",u.faction))
+
+    def bayonet_toggle(self,u:Unit):
+        if u.weapon_name not in ("Service Rifle","Carbine"): return
+        u.bayonet=not u.bayonet
+
+    def trench_assault(self,u:Unit,target:Unit):
+        if not u.combat_effective or not target.combat_effective:return
+        if dist(u,target)>1.45:return
+        ux,uy=u.tile;tx,ty=target.tile
+        if self.grid[uy][ux].terrain!="trench" or self.grid[ty][tx].terrain!="trench":return
+        chance=45 + (u.morale-target.morale)*.25 + (u.momentum*.15) + (18 if u.bayonet else 0) + (20 if target.suppression>=50 else 0)
+        if u.role=="Assault":chance+=20
+        if self.rng.uniform(0,100)<clamp(chance,10,95):
+            self.apply_damage(target,self.rng.uniform(55,100),u,"trench assault")
+            target.suppression=100
+        else:
+            u.suppression=clamp(u.suppression+40,0,100)
+        u.action_timer=1.8
+
+    # ---------------------------------------------------- engineers / medics
+    def medic_action(self,medic:Unit,target:Unit):
+        if medic.role!="Medic" or medic.med_supplies<=0 or dist(medic,target)>1.5:return
+        medic.action_timer=3.0;medic.order="medic";medic.target_uid=target.uid
+
+    def drag_toggle(self,u:Unit,target:Unit):
+        if dist(u,target)>1.5:return
+        if target.casualty!="incapacitated":return
+        u.carrying_uid=None
+        u.dragging_uid=None if u.dragging_uid==target.uid else target.uid
+
+    def carry_toggle(self,u:Unit,target:Unit):
+        if dist(u,target)>1.5:return
+        if target.casualty!="incapacitated":return
+        u.dragging_uid=None
+        u.carrying_uid=None if u.carrying_uid==target.uid else target.uid
+        if u.carrying_uid is not None:
+            u.target_uid=None
+            u.overwatch=False;u.fire_lane=False
+
+    def share_ammo(self,u:Unit,target:Unit):
+        if dist(u,target)>1.5 or not u.magazines:return
+        mag=u.magazines.pop()
+        # only compatible weapon magazines transfer directly
+        if u.weapon_name==target.weapon_name: target.magazines.append(mag)
+        else: u.magazines.append(mag); return
+        self.add_log(f"{u.role} shared a magazine with {target.role}.")
+
+    def engineer_action(self,u:Unit,pos:Coord,kind:str):
+        if u.role!="Engineer" or dist(u.pos,pos)>1.6:return
+        x,y=pos;c=self.grid[y][x]
+        if kind=="cut" and c.terrain=="wire" and u.tools>0:
+            u.tools-=1;u.action_timer=2.5;u.order="eng_cut";u.target_pos=pos
+        elif kind=="bangalore" and c.terrain=="wire" and u.satchel>0:
+            u.satchel-=1;u.action_timer=2.0
+            self.explosions.append(Explosion(x,y,2.0,2.4,95,80,"HE",u.faction))
+        elif kind=="clear_mine" and c.mine and u.tools>0:
+            u.tools-=1;u.action_timer=2.2;u.order="eng_mine";u.target_pos=pos
+        elif kind=="fortify" and c.terrain in ("open","crater","mud","rubble") and u.tools>0:
+            u.tools-=1;u.action_timer=5.0;u.order="eng_fort";u.target_pos=pos
+        elif kind=="trench" and c.terrain in ("open","mud") and u.tools>0:
+            u.tools-=1;u.action_timer=8.0;u.order="eng_trench";u.target_pos=pos
+        elif kind=="wire" and c.terrain in ("open","mud","rubble") and u.tools>0:
+            u.tools-=1;u.action_timer=4.5;u.order="eng_wire";u.target_pos=pos
+
+    def scan_mines(self,u:Unit):
+        if u.role not in ("Engineer","Recon"):return
+        ux,uy=u.tile;radius=5 if u.role=="Engineer" else 4
+        for y in range(max(0,uy-radius),min(MAP_H,uy+radius+1)):
+            for x in range(max(0,ux-radius),min(MAP_W,ux+radius+1)):
+                if self.grid[y][x].mine and math.hypot(x-ux,y-uy)<=radius:
+                    if u.faction=="player":self.grid[y][x].mine_seen_player=True
+                    else:self.grid[y][x].mine_seen_enemy=True
+        u.action_timer=1.5;u.signature=max(u.signature,3)
+
+    def peek(self,u:Unit):
+        u.peek_until=self.time+2.0;u.action_timer=.6;u.signature=max(u.signature,4)
+
+    # ------------------------------------------------------- indirect support
+    def mortar_fire(self,u:Unit,pos:Tuple[float,float],smoke=False):
+        if u.role!="Mortar Team" or not u.deployed or u.mortar_shells<=0:return
+        if dist(u.pos,pos)<5 or dist(u.pos,pos)>22:return
+        u.mortar_shells-=1;u.action_timer=3.0
+        flight=2.8+self.rng.uniform(-.3,.4)
+        scatter=1.4 if u.suppression<40 else 2.5
+        px=clamp(pos[0]+self.rng.gauss(0,scatter*.35),0,MAP_W-1)
+        py=clamp(pos[1]+self.rng.gauss(0,scatter*.35),0,MAP_H-1)
+        if smoke:self.explosions.append(Explosion(px,py,flight,3.0,0,0,"SMOKE",u.faction))
+        else:self.explosions.append(Explosion(px,py,flight,2.8,92,82,"HE",u.faction))
+
+    def call_support(self,faction:str,pos:Tuple[float,float],smoke=False):
+        key=f"{faction}_{'SMOKE' if smoke else 'HE'}"
+        if self.support.get(key,0)<=0:return
+        self.support[key]-=1
+        for i in range(4 if not smoke else 3):
+            px=clamp(pos[0]+self.rng.uniform(-2.0,2.0),0,MAP_W-1)
+            py=clamp(pos[1]+self.rng.uniform(-2.0,2.0),0,MAP_H-1)
+            self.explosions.append(Explosion(px,py,3.0+i*.35,3.0,85 if not smoke else 0,80 if not smoke else 0,"SMOKE" if smoke else "HE",faction))
+
+    # -------------------------------------------------------------- explosions
+    def resolve_explosion(self,e:Explosion):
+        self.emit("explosion", pos=(e.x,e.y), kind=e.kind, radius=e.radius)
+        if e.kind=="SMOKE":
+            for y in range(max(0,int(e.y-e.radius)),min(MAP_H,int(e.y+e.radius)+1)):
+                for x in range(max(0,int(e.x-e.radius)),min(MAP_W,int(e.x+e.radius)+1)):
+                    d=math.hypot(x-e.x,y-e.y)
+                    if d<=e.radius:self.grid[y][x].smoke=max(self.grid[y][x].smoke,2.4-d*.35)
+            return
+        for u in self.living():
+            d=dist(u.pos,(e.x,e.y))
+            if d<=e.radius:
+                c=self.grid[u.tile[1]][u.tile[0]]
+                confined=1.22 if c.terrain in ("trench","bunker","building") else 1.0
+                dmg=max(0,e.damage*(1-d/e.radius)*confined)
+                if u.stance=="prone":dmg*=.78
+                self.apply_damage(u,dmg,None,"blast")
+                u.suppression=clamp(u.suppression+e.suppression*(1-d/e.radius)*confined,0,100)
+        # terrain destruction and cratering
+        for y in range(max(0,int(e.y-e.radius)),min(MAP_H,int(e.y+e.radius)+1)):
+            for x in range(max(0,int(e.x-e.radius)),min(MAP_W,int(e.x+e.radius)+1)):
+                d=math.hypot(x-e.x,y-e.y)
+                if d>e.radius:continue
+                c=self.grid[y][x]
+                power=e.damage*(1-d/e.radius)
+                if c.hp is not None:
+                    c.hp-=power
+                    if c.hp<=0:
+                        if c.terrain in ("wall","building","woodwall","window","bunker","sandbags","door"):c.reset_terrain("rubble")
+                        elif c.terrain=="wire":c.reset_terrain("open")
+                        elif c.terrain=="bridge":c.reset_terrain("water")
+                        elif c.terrain=="woods":c.reset_terrain("open")
+                if power>65 and c.terrain in ("open","mud","road"): c.reset_terrain("crater")
+                if power>105 and c.terrain=="trench" and self.rng.random()<.42: c.reset_terrain("rubble")
+                if power>45 and c.terrain in ("woods","building") and self.rng.random()<.3:c.fire=max(c.fire,4.0)
+
+    # ------------------------------------------------------------- simulation
+    def update(self,dt:float):
+        if self.paused or self.victory or self.defeat:return
+        self.time+=dt
+        self._world_timer -= dt
+        self._spot_timer -= dt
+        self._cohesion_timer -= dt
+        if self._world_timer <= 0:
+            self.update_weather_world(.20)
+            self._world_timer = .20
+        if self._spot_timer <= 0:
+            self.update_spotting()
+            self._spot_timer = .16
+        # simultaneous unit simulation
+        for u in list(self.units):
+            self.update_unit(u,dt)
+        self.update_reaction_fire()
+        self.update_autofire()
+        self.update_bounding_orders(dt)
+        self.update_explosions(dt)
+        if self._cohesion_timer <= 0:
+            self.update_cohesion_and_morale(.33)
+            self._cohesion_timer = .33
+        self.update_ai(dt)
+        self.check_end()
+        for t in list(self.tracers):
+            t.life-=dt
+            if t.life<=0:self.tracers.remove(t)
+        for b in self.blood:b.fresh=max(0,b.fresh-dt*.09)
+
+    def update_weather_world(self,dt):
+        # Smoke decays, drifts with wind, rain creates some mud and suppresses fire.
+        drift_chance=dt*.12
+        moves=[]
+        for y,row in enumerate(self.grid):
+            for x,c in enumerate(row):
+                if c.smoke>0:
+                    c.smoke=max(0,c.smoke-dt*(.10 if self.weather=="fog" else .16))
+                    if c.smoke>.8 and self.rng.random()<drift_chance:
+                        nx,ny=x+self.wind[0],y+self.wind[1]
+                        if self.in_bounds(nx,ny):moves.append((nx,ny,c.smoke*.10))
+                if c.fire>0:
+                    c.fire=max(0,c.fire-dt*(.42 if self.weather=="rain" else .14))
+                    if c.fire>1 and self.rng.random()<dt*.04:
+                        for nx,ny in ((x+1,y),(x-1,y),(x,y+1),(x,y-1)):
+                            if self.in_bounds(nx,ny) and self.grid[ny][nx].terrain in ("woods","building"):
+                                self.grid[ny][nx].fire=max(self.grid[ny][nx].fire,2.0)
+                if self.weather=="rain" and c.terrain=="open" and self.rng.random()<dt*.00035:
+                    c.reset_terrain("mud")
+        for x,y,s in moves:self.grid[y][x].smoke=max(self.grid[y][x].smoke,s)
+
+    def update_unit(self,u:Unit,dt:float):
+        if not u.alive:return
+        if u.casualty=="incapacitated":
+            if u.bleed>0:
+                u.bleed-=dt
+                if u.bleed<=0:
+                    u.casualty="dead"
+                    self.blood.append(BloodDecal(u.x,u.y,self.rng.uniform(.45,.75),self.rng.randint(0,999999),1.0))
+                    self.emit("death",pos=u.pos,cause="bleedout")
+                    self.add_log(f"{u.faction} {u.role} bled out.")
+            return
+        if not u.combat_effective:return
+        # continuous suppression/heat/signature decay
+        cover=TERRAIN[self.grid[u.tile[1]][u.tile[0]].terrain]["cover"]
+        u.suppression=max(0,u.suppression-dt*(3.2+cover*.45+(u.cohesion/100)*1.5))
+        u.heat=max(0,u.heat-dt*u.weapon["cool"])
+        u.signature=max(0,u.signature-dt*8)
+        u.momentum=max(0,u.momentum-dt*2.0)
+        # broken units rout or surrender.
+        if (u.morale<16 or u.suppression>=98) and u.order not in ("rout","surrender"):
+            self.handle_break(u)
+        if u.action_timer>0:
+            u.action_timer-=dt
+            if u.action_timer<=0:self.complete_action(u)
+            return
+        if u.reload_timer>0:
+            u.reload_timer-=dt
+            if u.reload_timer<=0:self.finish_reload(u)
+            return
+        if u.jammed:return
+        # aiming can build while stationary
+        if u.order=="fire" and u.fire_mode=="aimed" and not u.path:
+            u.aim_progress=clamp(u.aim_progress+dt*.55,0,1)
+        else:u.aim_progress=max(0,u.aim_progress-dt*.3)
+        if u.order in ("move","rout"):
+            self.update_movement(u,dt)
+        elif u.order=="fire":
+            target=self.get_unit(u.target_uid)
+            if not target or not target.combat_effective:u.order="idle";u.target_uid=None
+            elif self.time>=u.next_shot:self.perform_shot(u,target)
+        elif u.order=="suppress":
+            if self.time>=u.next_shot:self.perform_suppressive_shot(u)
+        elif u.order in ("overwatch","fire_lane","idle"):
+            pass
+        self.process_command_queue(u)
+
+    def complete_action(self,u:Unit):
+        order=u.order
+        if order=="clear_jam":u.jammed=False;u.order="idle"
+        elif order=="barrel":u.barrel_spares=max(0,u.barrel_spares-1);u.heat=5;u.order="idle"
+        elif order=="deploy":u.deployed=True;u.order="idle"
+        elif order=="pack":u.deployed=False;u.order="idle"
+        elif order=="medic":
+            t=self.get_unit(u.target_uid)
+            if t and dist(u,t)<=1.7 and u.med_supplies>0:
+                u.med_supplies-=1
+                if t.casualty=="incapacitated":
