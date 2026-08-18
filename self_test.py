@@ -220,6 +220,22 @@ def test_asset_manifest_sources():
     assert expected<=set(kz.ASSET_MANIFEST)
     assert kz.ASSET_MANIFEST['explosion2.ogg'].endswith('/explosion2.ogg')
 
+
+def test_custom_roster_and_default_free_fire():
+    roster=['Rifleman','Rifleman','Medic','HMG Crew']
+    g=kz.RealTimeGame(seed=35,difficulty='Hard',player_roster=roster)
+    players=[u for u in g.units if u.faction=='player']
+    assert [u.role for u in players]==roster
+    assert all(u.fire_discipline=='free' for u in players)
+
+
+def test_roster_validation_and_cap():
+    roster=['not-a-role']+['Rifleman']*(kz.MAX_PLAYER_UNITS+5)
+    g=kz.RealTimeGame(seed=36,difficulty='Easy',player_roster=roster)
+    players=[u for u in g.units if u.faction=='player']
+    assert len(players)==kz.MAX_PLAYER_UNITS
+    assert all(u.role=='Rifleman' for u in players)
+
 TESTS=[v for k,v in list(globals().items()) if k.startswith('test_')]
 if __name__=='__main__':
     for t in TESTS:
