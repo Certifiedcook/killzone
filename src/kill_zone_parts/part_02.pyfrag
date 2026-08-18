@@ -143,11 +143,7 @@
         return u
 
     def spawn_default_forces(self):
-        player_roles = [
-            "Rifleman", "Rifleman", "Machine Gunner", "Sniper", "Medic",
-            "Engineer", "Recon", "Grenadier", "Assault", "Automatic Rifleman",
-            "Marksman", "HMG Crew", "Mortar Team"
-        ]
+        player_roles = list(self.player_roster)
         slots = [(2 + i % 4, 3 + (i // 4) * 5 + (i % 2)) for i in range(len(player_roles))]
         for role, (x, y) in zip(player_roles, slots):
             self.add_unit("player", role, x, min(y, MAP_H - 2))
