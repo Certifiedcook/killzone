@@ -1,0 +1,232 @@
+        self.show_threat=False
+        self.show_help=self.menu_show_help
+        self.speed=self.menu_speed
+        self.control_groups={i:[] for i in range(1,10)}
+        self.battle_active=True
+        self.state="game"
+
+    def handle_menu_event(self,e):
+        if e.type==pygame.QUIT:
+            self.running=False;return
+        if e.type==pygame.KEYDOWN:
+            if e.key==pygame.K_RETURN:
+                self.state="setup"
+            elif e.key==pygame.K_ESCAPE:
+                self.running=False
+            return
+        if e.type!=pygame.MOUSEBUTTONDOWN or e.button!=1:return
+        for name,r in self.main_menu_rects().items():
+            if not r.collidepoint(e.pos):continue
+            if name=="continue":
+                self.state="game"
+            elif name=="play":
+                self.state="setup"
+            elif name=="settings":
+                self.state="settings"
+            elif name=="help":
+                self.state="help"
+            elif name=="quit":
+                self.running=False
+            return
+
+    def handle_setup_event(self,e):
+        if e.type==pygame.QUIT:
+            self.running=False;return
+        if e.type==pygame.KEYDOWN and e.key==pygame.K_ESCAPE:
+            self.state="menu";return
+        if e.type!=pygame.MOUSEBUTTONDOWN or e.button!=1:return
+        total=sum(self.setup_roster.values())
+        for (role,action),r in self.roster_rects().items():
+            if not r.collidepoint(e.pos):continue
+            count=self.setup_roster.get(role,0)
+            if action=="minus" and count>0:self.setup_roster[role]=count-1
+            elif action=="plus" and count<MAX_ROLE_COUNT and total<MAX_PLAYER_UNITS:self.setup_roster[role]=count+1
+            return
+        for name,r in self.setup_rects().items():
+            if not r.collidepoint(e.pos):continue
+            if name in ("easy","hard","veteran"):
+                self.setup_difficulty=name.title()
+            elif name=="balanced":
+                self.setup_roster={role:DEFAULT_PLAYER_ROSTER.count(role) for role in PLAYER_ROLE_ORDER}
+            elif name=="clear":
+                self.setup_roster={role:0 for role in PLAYER_ROLE_ORDER}
+            elif name=="start":
+                self.start_battle()
+            elif name=="back":
+                self.state="menu"
+            return
+
+    def handle_settings_event(self,e):
+        if e.type==pygame.QUIT:
+            self.running=False;return
+        if e.type==pygame.KEYDOWN and e.key==pygame.K_ESCAPE:
+            self.state="menu";return
+        if e.type!=pygame.MOUSEBUTTONDOWN or e.button!=1:return
+        for name,r in self.settings_rects().items():
+            if not r.collidepoint(e.pos):continue
+            if name=="speed05":self.menu_speed=.5
+            elif name=="speed1":self.menu_speed=1.0
+            elif name=="speed2":self.menu_speed=2.0
+            elif name=="help":self.menu_show_help=not self.menu_show_help
+            elif name=="audio":self.audio_enabled=not self.audio_enabled
+            elif name=="fps":self.show_fps=not self.show_fps
+            elif name=="fullscreen":self.toggle_fullscreen()
+            elif name=="back":self.state="menu"
+            return
+
+    def handle_help_menu_event(self,e):
+        if e.type==pygame.QUIT:
+            self.running=False;return
+        if e.type==pygame.KEYDOWN and e.key in (pygame.K_ESCAPE,pygame.K_F1):
+            self.state="menu";return
+        if e.type==pygame.MOUSEBUTTONDOWN and e.button==1 and self.help_menu_rects()["back"].collidepoint(e.pos):
+            self.state="menu"
+
+    def map_cell_from_mouse(self,pos) -> Optional[Coord]:
+        mx,my=pos
+        x=(mx-MAP_X)//TILE;y=(my-MAP_Y)//TILE
+        if 0<=x<MAP_W and 0<=y<MAP_H:return int(x),int(y)
+        return None
+
+    def unit_at_pixel(self,pos) -> Optional[Unit]:
+        cell=self.map_cell_from_mouse(pos)
+        if not cell:return None
+        return self.game.unit_at(*cell)
+
+    def selected_units(self) -> List[Unit]:
+        out=[]
+        for uid in self.selected:
+            u=self.game.get_unit(uid)
+            if u and u.faction=="player" and u.alive:out.append(u)
+        return out
+
+    def select(self,u:Optional[Unit],add=False):
+        if not add:self.selected=[]
+        if u and u.faction=="player":
+            if u.uid in self.selected and add:self.selected.remove(u.uid)
+            elif u.uid not in self.selected:self.selected.append(u.uid)
+
+    def issue_context_command(self,cell:Coord,append=False):
+        units=self.selected_units()
+        if not units:return
+        target=self.game.unit_at(*cell)
+        if target and target.faction=="player":
+            mods=pygame.key.get_mods()
+            for u in units:
+                if u.uid==target.uid: continue
+                if mods & pygame.KMOD_CTRL:
+                    self.game.share_ammo(u,target)
+                elif (mods & pygame.KMOD_ALT) and target.casualty=="incapacitated":
+                    self.game.carry_toggle(u,target)
+                elif u.role=="Medic" and target.casualty in ("wounded","incapacitated"):
+                    self.game.medic_action(u,target)
+                elif target.casualty=="incapacitated":
+                    self.game.drag_toggle(u,target)
+            return
+        if target and target.faction=="enemy" and self.game.visible_to("player",target):
+            for u in units:
+                ux,uy=u.tile;tx,ty=target.tile
+                if append:
+                    self.game.queue_fire(u,target.uid,u.fire_mode);continue
+                if u.bayonet and dist(u,target)<=1.5 and self.game.grid[uy][ux].terrain in ("trench","firing_step") and self.game.grid[ty][tx].terrain in ("trench","firing_step"):
+                    self.game.trench_assault(u,target)
+                else:
+                    self.game.issue_fire(u,target,u.fire_mode)
+            return
+        if self.command_mode=="grenade":
+            for u in units:self.game.throw_grenade(u,cell,cook=self.cook)
+            self.command_mode="normal";return
+        if self.command_mode=="smoke":
+            for u in units:self.game.throw_grenade(u,cell,smoke=True)
+            self.command_mode="normal";return
+        if self.command_mode=="rifle_grenade":
+            for u in units:self.game.throw_grenade(u,cell,rifle=True)
+            self.command_mode="normal";return
+        if self.command_mode=="satchel":
+            for u in units:self.game.place_satchel(u,cell)
+            self.command_mode="normal";return
+        if self.command_mode=="suppress":
+            for u in units:self.game.suppress_area(u,cell)
+            self.command_mode="normal";return
+        if self.command_mode=="mortar":
+            for u in units:self.game.mortar_fire(u,cell,False)
+            self.command_mode="normal";return
+        if self.command_mode=="mortar_smoke":
+            for u in units:self.game.mortar_fire(u,cell,True)
+            self.command_mode="normal";return
+        if self.command_mode=="support_he":
+            self.game.call_support("player",cell,False);self.command_mode="normal";return
+        if self.command_mode=="support_smoke":
+            self.game.call_support("player",cell,True);self.command_mode="normal";return
+        if self.command_mode=="bound":
+            self.game.bounding_advance(units,cell);self.command_mode="normal";return
+        if self.command_mode.startswith("eng_"):
+            kind=self.command_mode.split("_",1)[1]
+            for u in units:self.game.engineer_action(u,cell,kind)
+            self.command_mode="normal";return
+        self.game.issue_move(units,cell,append=append,formation=self.formation)
+
+    def cycle_formation(self):
+        fs=["wedge","line","column","spread"];self.formation=fs[(fs.index(self.formation)+1)%len(fs)]
+
+    def cycle_discipline(self,units):
+        ds=["hold","return","free","confident"]
+        for u in units:u.fire_discipline=ds[(ds.index(u.fire_discipline)+1)%len(ds)]
+
+    def cycle_priority(self,units):
+        ps=["nearest","exposed","specialist","suppressed"]
+        for u in units:u.target_priority=ps[(ps.index(u.target_priority)+1)%len(ps)]
+
+    def command_bar_rects(self):
+        labels=["SUPPRESS","OVERWATCH","GRENADE","SMOKE","RELOAD","STANCE","FORMATION","DISCIPLINE","PRIORITY","BOUND"]
+        w=112;gap=5;x=MAP_X;y=MAP_Y+MAP_H*TILE+8
+        return {lab:pygame.Rect(x+i*(w+gap),y,w,32) for i,lab in enumerate(labels)}
+
+    def handle_command_bar(self,pos):
+        us=self.selected_units()
+        if not us:return False
+        for name,r in self.command_bar_rects().items():
+            if not r.collidepoint(pos):continue
+            if name=="SUPPRESS":self.command_mode="suppress"
+            elif name=="OVERWATCH":
+                cell=self.map_cell_from_mouse(self.mouse)
+                if cell:
+                    for u in us:self.game.set_overwatch(u,angle_to(u,cell),90)
+            elif name=="GRENADE":self.command_mode="grenade"
+            elif name=="SMOKE":self.command_mode="smoke"
+            elif name=="RELOAD":
+                for u in us:self.game.start_reload(u)
+            elif name=="STANCE":
+                for u in us:self.game.cycle_stance(u)
+            elif name=="FORMATION":self.cycle_formation()
+            elif name=="DISCIPLINE":self.cycle_discipline(us)
+            elif name=="PRIORITY":self.cycle_priority(us)
+            elif name=="BOUND":self.command_mode="bound"
+            return True
+        return False
+
+    def handle_key(self,key,mods):
+        us=self.selected_units()
+        if key==pygame.K_ESCAPE:
+            self.game.paused=True
+            self.state="menu"
+            return
+        if key==pygame.K_SPACE:self.game.paused=not self.game.paused
+        elif key==pygame.K_F1:self.show_help=not self.show_help
+        elif key==pygame.K_TAB:self.show_threat=not self.show_threat
+        elif pygame.K_1<=key<=pygame.K_9:
+            num=key-pygame.K_0
+            if mods & pygame.KMOD_CTRL:self.control_groups[num]=[u.uid for u in us]
+            else:self.selected=[uid for uid in self.control_groups.get(num,[]) if self.game.get_unit(uid) and self.game.get_unit(uid).alive]
+        elif key==pygame.K_MINUS:self.speed=.5
+        elif key==pygame.K_EQUALS:self.speed=1.0
+        elif key==pygame.K_RIGHTBRACKET:self.speed=2.0
+        elif key==pygame.K_F3:self.command_mode="bound"
+        elif key==pygame.K_F4:self.cycle_formation()
+        elif key==pygame.K_F7:self.cycle_discipline(us)
+        elif key==pygame.K_F8:self.cycle_priority(us)
+        elif key==pygame.K_z:
+            for u in us:self.game.cycle_stance(u)
+        elif key==pygame.K_x:
+            for u in us:self.game.cycle_move_mode(u)
+        elif key==pygame.K_a:
