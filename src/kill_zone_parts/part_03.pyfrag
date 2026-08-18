@@ -1,0 +1,306 @@
+        if target.stance == "prone": cover += 1.5
+        elif target.stance == "crouched": cover += .7
+        return max(0, cover)
+
+    def known_contacts(self, faction: str, memory: float = 10.0):
+        out=[]
+        stale=[]
+        for uid, info in self.intel[faction].items():
+            age=self.time-info["seen"]
+            if age>memory:
+                stale.append(uid);continue
+            out.append((uid, info, age))
+        for uid in stale:self.intel[faction].pop(uid,None)
+        return out
+
+    # --------------------------------------------------------------- pathing
+    def passable(self, x: int, y: int, unit: Optional[Unit] = None) -> bool:
+        if not self.in_bounds(x,y): return False
+        c = self.grid[y][x]
+        if c.terrain == "door" and not c.door_open: return False
+        if TERRAIN[c.terrain]["move"] >= 999: return False
+        other = self.unit_at(x,y)
+        if other and (unit is None or other.uid != unit.uid) and other.combat_effective:
+            return False
+        return True
+
+    def tile_threat(self, faction: str, x: int, y: int) -> float:
+        # Deliberately cheap approximation for routing/overlay. Actual shots still use
+        # precise LOS. Re-running Bresenham LOS for every A* candidate made safe
+        # routing too expensive for a real-time simulation.
+        threat = 0.0
+        enemy_faction = "enemy" if faction == "player" else "player"
+        for e in self.living(enemy_faction):
+            if not e.combat_effective:
+                continue
+            if faction == "player" and not self.visible_to("player", e):
+                continue
+            if faction == "enemy" and not self.visible_to("enemy", e):
+                continue
+            d = math.hypot(e.x-x, e.y-y)
+            if d > e.weapon["range"] + 1.5:
+                continue
+            local = max(.15, 1.25 - d / max(1.0, e.weapon["range"]))
+            bearing = angle_to(e, (x,y))
+            if (e.overwatch or e.fire_lane) and angle_diff(e.fire_lane_center, bearing) <= e.arc_width/2:
+                local += .9
+            if e.role in ("Machine Gunner","HMG Crew"):
+                local += .35
+            threat += local
+        return threat
+
+    def find_path(self, unit: Unit, dest: Coord, mode: Optional[str] = None) -> List[Coord]:
+        mode = mode or unit.move_mode
+        start = unit.tile
+        if not self.passable(*dest, unit): return []
+        pq = [(0.0, start)]
+        came: Dict[Coord, Optional[Coord]] = {start: None}
+        cost = {start: 0.0}
+        while pq:
+            _, cur = heapq.heappop(pq)
+            if cur == dest: break
+            x,y = cur
+            for nx,ny in ((x+1,y),(x-1,y),(x,y+1),(x,y-1)):
+                if not self.passable(nx,ny,unit): continue
+                cell = self.grid[ny][nx]
+                step = TERRAIN[cell.terrain]["move"]
+                # Connected trenches are intentionally fast protected movement routes.
+                if cell.terrain == "trench" and self.grid[y][x].terrain == "trench": step *= .62
+                if mode == "safe": step += self.tile_threat(unit.faction,nx,ny) * 2.2
+                elif mode == "fast": step *= .8
+                ncost = cost[cur] + step
+                if (nx,ny) not in cost or ncost < cost[(nx,ny)]:
+                    cost[(nx,ny)] = ncost
+                    h = abs(dest[0]-nx)+abs(dest[1]-ny)
+                    heapq.heappush(pq,(ncost+h*.4,(nx,ny)))
+                    came[(nx,ny)] = cur
+        if dest not in came: return []
+        out=[]; cur=dest
+        while cur != start:
+            out.append(cur); cur=came[cur]
+        out.reverse()
+        return out
+
+    def formation_offsets(self, n: int, formation: str):
+        if formation == "line":
+            return [(i-(n-1)/2,0) for i in range(n)]
+        if formation == "column":
+            return [(0,i) for i in range(n)]
+        if formation == "wedge":
+            out=[(0,0)]
+            for i in range(1,n):
+                rank=(i+1)//2;side=-1 if i%2 else 1;out.append((side*rank,rank))
+            return out
+        # spread
+        cols=max(2,int(math.ceil(math.sqrt(n))))
+        return [((i%cols)-(cols-1)/2,(i//cols)) for i in range(n)]
+
+    def issue_move(self, units: List[Unit], dest: Coord, append=False, mode=None, formation="spread"):
+        effective=[u for u in units if u.combat_effective]
+        offsets=self.formation_offsets(len(effective),formation)
+        for u,(ox,oy) in zip(effective,offsets):
+            d = (int(clamp(round(dest[0]+ox),0,MAP_W-1)), int(clamp(round(dest[1]+oy),0,MAP_H-1)))
+            if not self.passable(*d,u): d=dest
+            if mode: u.move_mode = mode
+            if append:
+                u.command_queue.append(("move", d))
+                continue
+            u.waypoints = [d]
+            u.path = []
+            u.order = "move"
+            u.target_uid = None
+            u.overwatch = False
+            u.fire_lane = False
+
+    def queue_fire(self, u: Unit, target_uid: int, mode: str = "normal"):
+        u.command_queue.append(("fire", (target_uid, mode)))
+
+    def process_command_queue(self, u: Unit):
+        if u.order != "idle" or u.action_timer>0 or u.reload_timer>0 or not u.command_queue:return
+        kind,data=u.command_queue.pop(0)
+        if kind=="move": self.issue_move([u],data,formation="column")
+        elif kind=="fire":
+            uid,mode=data;t=self.get_unit(uid)
+            if t and t.combat_effective:self.issue_fire(u,t,mode)
+
+    # --------------------------------------------------------------- combat
+    def hit_chance(self, attacker: Unit, target: Unit, mode: Optional[str]=None, reaction=False) -> float:
+        mode = mode or attacker.fire_mode
+        w = attacker.weapon
+        d = dist(attacker,target)
+        if d > w["range"]: return 0.0
+        clear, smoke, soft_pen, _ = self.line_info(attacker.pos,target.pos)
+        if not clear: return 0.0
+        if soft_pen > w["pen"] + 1: return 0.0
+        chance = float(w["acc"])
+        chance += DIFFICULTY[self.difficulty]["acc"] if attacker.faction == "enemy" else 0
+        chance -= max(0,d - 2) * 2.8
+        chance -= self.effective_cover(attacker,target) * 9
+        chance += STANCE[attacker.stance]["acc"] + STANCE[target.stance]["hit"]
+        chance -= attacker.suppression * .30
+        if attacker.casualty == "wounded": chance -= 8
+        chance += (attacker.cohesion - 50) * .08
+        chance += (attacker.morale - 50) * .05
+        chance -= smoke * 15
+        chance -= soft_pen * 7
+        if mode == "snap": chance -= 16
+        elif mode == "aimed": chance += 18 + attacker.aim_progress * 10
+        elif mode == "rapid": chance -= 12
+        if attacker.deployed and attacker.role in ("Machine Gunner","HMG Crew"): chance += 8
+        if attacker.role == "Sniper" and mode == "aimed" and attacker.suppression < 30 and attacker.action_timer <= 0 and smoke < .4 and d >= 3:
+            chance = max(chance,80)
+        if reaction: chance -= 8
+        # Facing/flank benefits.
+        incoming = angle_to(target,attacker)
+        flank = angle_diff(target.facing,incoming)
+        if flank > 125: chance += 18
+        elif flank > 75: chance += 9
+        # CQB
+        if d <= 2.2:
+            if attacker.role == "Assault": chance += 18
+            if attacker.bayonet and attacker.weapon_name in ("Service Rifle","Carbine"): chance += 8
+            if attacker.weapon_name == "Scoped Rifle": chance -= 30
+        ah = TERRAIN[self.grid[attacker.tile[1]][attacker.tile[0]].terrain]["height"]
+        th = TERRAIN[self.grid[target.tile[1]][target.tile[0]].terrain]["height"]
+        chance += (ah-th)*6.0
+        if self.weather == "rain": chance -= 3
+        elif self.weather == "fog": chance -= 7
+        return clamp(chance,2,96)
+
+    def fire_interval(self,u:Unit) -> float:
+        rpm=u.weapon["rpm"]
+        factor = 1.0
+        if u.fire_mode == "rapid": factor=.62
+        elif u.fire_mode == "snap": factor=.78
+        elif u.fire_mode == "aimed": factor=1.45
+        return 60.0/rpm*factor
+
+    def issue_fire(self, unit: Unit, target: Unit, mode="normal"):
+        if not unit.combat_effective: return
+        unit.order="fire"; unit.target_uid=target.uid; unit.fire_mode=mode
+        unit.overwatch=False; unit.fire_lane=False
+        if mode == "aimed": unit.aim_progress = 0.0
+
+    def perform_shot(self, attacker: Unit, target: Unit, reaction=False):
+        if not attacker.combat_effective or not target.combat_effective: return
+        if attacker.jammed or attacker.reload_timer > 0 or attacker.carrying_uid is not None: return
+        if attacker.heat >= 100:
+            attacker.order = "idle"
+            self.add_log(f"{attacker.role} overheated; fire stopped.")
+            return
+        if attacker.ammo <= 0:
+            self.start_reload(attacker); return
+        w=attacker.weapon
+        d=dist(attacker,target)
+        if d>w["range"]: return
+        attacker.facing=angle_to(attacker,target)
+        chance=self.hit_chance(attacker,target,reaction=reaction)
+        if chance <= 0: return
+        attacker.ammo -= 1
+        attacker.next_shot=self.time+self.fire_interval(attacker)
+        attacker.signature=max(attacker.signature, 55 if attacker.role in ("Machine Gunner","HMG Crew") else 32)
+        attacker.aim_progress = max(0, attacker.aim_progress - .35)
+        # Heat / jams.
+        heat_add=w["heat"] * (1.35 if attacker.fire_mode=="rapid" else 1.0)
+        attacker.heat += heat_add
+        jam_p=.002 + max(0,attacker.heat-75)*.0015
+        if self.rng.random()<jam_p:
+            attacker.jammed=True
+            self.add_log(f"{attacker.role} weapon jammed.")
+        ax,ay=attacker.pos; bx,by=target.pos
+        self.tracers.append(Tracer((ax,ay),(bx,by)))
+        self.emit("shot", weapon=attacker.weapon_name, pos=attacker.pos, faction=attacker.faction)
+        target.under_fire_until=self.time+3.0;target.last_attacker_uid=attacker.uid
+        roll=self.rng.uniform(0,100)
+        hit=roll<=chance
+        # suppression always exists around actual fire; MGs are area denial weapons.
+        supp=w["supp"]*(1.0 if hit else .55)
+        if attacker.role in ("Machine Gunner","HMG Crew") and attacker.deployed: supp*=1.25
+        target.suppression=clamp(target.suppression+supp,0,100)
+        target.morale=clamp(target.morale-supp*.14,0,100)
+        if hit:
+            close_mult=1.0+max(0,4-d)*.08
+            dmg=w["damage"]*close_mult*self.rng.uniform(.80,1.18)
+            if target.casualty=="wounded": dmg*=1.08
+            self.apply_damage(target,dmg,attacker,"gunfire")
+            attacker.momentum=clamp(attacker.momentum+12,0,100)
+            # Coordinated attack bonus: allies hitting already suppressed targets build momentum.
+            if target.suppression>=50:
+                for ally in self.living(attacker.faction):
+                    if dist(ally,attacker)<=6: ally.momentum=clamp(ally.momentum+3,0,100)
+        else:
+            # Near-miss suppression follows the bullet path rather than only the target tile.
+            for other in self.living(target.faction):
+                if other.uid==target.uid:continue
+                px,py=other.pos;vx=bx-ax;vy=by-ay
+                den=vx*vx+vy*vy
+                q=0 if den<=1e-8 else clamp(((px-ax)*vx+(py-ay)*vy)/den,0,1)
+                dd=math.hypot(px-(ax+q*vx),py-(ay+q*vy))
+                if dd<=0.75:
+                    other.suppression=clamp(other.suppression+supp*(.34 if dd<.35 else .20),0,100)
+                    other.under_fire_until=self.time+2.2;other.last_attacker_uid=attacker.uid
+
+    def apply_damage(self,target:Unit,damage:float,source:Optional[Unit],cause:str):
+        if not target.alive: return
+        target.hp-=damage
+        target.morale=clamp(target.morale-damage*.35,0,100)
+        target.under_fire_until=self.time+3.5
+        if source:target.last_attacker_uid=source.uid
+        self.emit("hurt", pos=target.pos, damage=damage, cause=cause)
+        if damage>=12:
+            self.blood.append(BloodDecal(target.x+self.rng.uniform(-.18,.18),target.y+self.rng.uniform(-.18,.18),clamp(damage/85,.12,.65),self.rng.randint(0,999999),1.0))
+            self.blood=self.blood[-180:]
+        if target.assistant_alive and damage >= 30 and self.rng.random() < min(.45, damage/180):
+            target.assistant_alive = False
+            target.crew = max(1, target.crew-1)
+            target.morale = max(0, target.morale-12)
+            self.add_log(f"{target.faction} {target.role} lost its assistant gunner.")
+        if target.hp<=0:
+            # Incapacitation vs immediate death.
+            lethality=clamp((damage-25)/75,.12,.70)
+            if self.rng.random()<lethality:
+                target.casualty="dead"; target.hp=0; target.bleed=0
+                self.blood.append(BloodDecal(target.x,target.y,self.rng.uniform(.55,.95),self.rng.randint(0,999999),1.0))
+                self.emit("death", pos=target.pos, cause=cause)
+                self.add_log(f"{target.faction} {target.role} killed ({cause}).")
+            else:
+                target.casualty="incapacitated"; target.hp=0; target.bleed=self.rng.uniform(12,28)
+                self.add_log(f"{target.faction} {target.role} incapacitated.")
+            target.order="idle"; target.path=[]; target.waypoints=[]
+            # nearby casualty shock
+            for ally in self.living(target.faction):
+                if ally.uid!=target.uid and dist(ally,target)<5:
+                    ally.morale=max(0,ally.morale-12)
+                    ally.suppression=clamp(ally.suppression+8,0,100)
+        elif target.hp<target.max_hp*.55 and target.casualty=="healthy":
+            target.casualty="wounded"; target.bleed=self.rng.uniform(5,12)
+
+    def start_reload(self,u:Unit, emergency=False):
+        if u.reload_timer>0 or not u.magazines: return
+        speed=1.0
+        if u.role in ("Machine Gunner","HMG Crew") and u.assistant_alive: speed=.72
+        if emergency: speed*=.68
+        u.reload_emergency=emergency
+        u.reload_timer=u.weapon["reload"]*speed
+        u.order="reload"
+
+    def finish_reload(self,u:Unit, emergency=None):
+        if not u.magazines: return
+        if emergency is None: emergency=u.reload_emergency
+        # Tactical reload preserves a partial magazine. Emergency reload drops it.
+        old=u.ammo
+        new=u.magazines.pop(0)
+        if old>0 and not emergency: u.magazines.append(old)
+        u.ammo=new;u.reload_timer=0;u.reload_emergency=False;u.order="idle"
+
+    def clear_jam(self,u:Unit):
+        if u.jammed and u.action_timer<=0:
+            u.action_timer=1.8; u.order="clear_jam"
+
+    def change_barrel(self,u:Unit):
+        if u.role not in ("Machine Gunner","HMG Crew") or u.barrel_spares<=0 or u.action_timer>0: return
+        u.action_timer=4.0; u.order="barrel"
+
+    def toggle_deploy(self,u:Unit):
+        if u.role not in ("Machine Gunner","HMG Crew","Mortar Team"): return
+        u.action_timer=2.0 if not u.deployed else 1.2
