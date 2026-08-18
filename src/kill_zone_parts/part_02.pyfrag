@@ -1,0 +1,321 @@
+        self.tracers: List[Tracer] = []
+        self.blood: List[BloodDecal] = []
+        self.events: List[dict] = []
+        self.bounding_orders: List[BoundingOrder] = []
+        self.intel = {"player": {}, "enemy": {}}
+        self.log: List[str] = []
+        self.next_uid = 1
+        self.weather = self.rng.choice(["clear", "clear", "rain", "fog"])
+        self.wind = self.rng.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
+        self.support = {"player_HE": 2, "player_SMOKE": 2, "enemy_HE": 1, "enemy_SMOKE": 1}
+        self.victory = False
+        self.defeat = False
+        self.paused = False
+        self._spot_timer = 0.0
+        self._world_timer = 0.0
+        self._cohesion_timer = 0.0
+        self.generate_map()
+        self.spawn_default_forces()
+        self.add_log(f"Realtime battle started. Seed {self.seed}. Weather: {self.weather}.")
+
+    # ------------------------------------------------------------------ map
+    def set_cell(self, x: int, y: int, terrain: str, axis: Optional[str] = None):
+        if 0 <= x < MAP_W and 0 <= y < MAP_H:
+            self.grid[y][x].reset_terrain(terrain, axis)
+            if terrain == "door":
+                self.grid[y][x].door_open = False
+
+    def generate_map(self):
+        # Base no-man's-land with coherent lanes rather than noise.
+        for y in range(MAP_H):
+            for x in range(MAP_W):
+                self.set_cell(x, y, "open")
+        # Main road.
+        road_y = self.rng.randint(5, MAP_H - 6)
+        for x in range(MAP_W):
+            if self.rng.random() < .94:
+                self.set_cell(x, road_y, "road")
+        # Defensive trench network on the east.
+        tx = MAP_W - 10
+        for y in range(2, MAP_H - 2):
+            self.set_cell(tx, y, "trench", "V")
+        for x in range(tx - 5, MAP_W - 2):
+            for y in (5, MAP_H // 2, MAP_H - 6):
+                self.set_cell(x, y, "trench", "H")
+        # Communication trench toward the centre.
+        cx, cy = tx, MAP_H // 2
+        for i in range(7):
+            self.set_cell(cx - i, cy + (i // 3), "trench", "H")
+        # Traverses, firing bays and dugouts break up long enfilade lines.
+        for y in range(4, MAP_H-4, 5):
+            side = -1 if (y//5) % 2 else 1
+            self.set_cell(tx + side, y, "trench", "H")
+            self.set_cell(tx + side, y + 1, "firing_step", "V")
+            if self.in_bounds(tx + 2*side, y+1):
+                self.set_cell(tx + 2*side, y+1, "dugout")
+            if self.in_bounds(tx - side, y):
+                self.set_cell(tx - side, y, "sandbags")
+        # Bunkers / sandbags.
+        for y in (5, MAP_H // 2, MAP_H - 6):
+            self.set_cell(tx + 2, y, "bunker")
+            for dy in (-1, 1):
+                if 0 <= y + dy < MAP_H:
+                    self.set_cell(tx - 1, y + dy, "sandbags")
+        # Wire belt with deliberate breaches.
+        wx = tx - 5
+        gaps = {road_y, MAP_H // 2 + 1, self.rng.randint(2, MAP_H - 3)}
+        for y in range(1, MAP_H - 1):
+            if y not in gaps:
+                self.set_cell(wx, y, "wire")
+        # Minefield patches behind/around wire.
+        for _ in range(28):
+            x = self.rng.randint(wx - 2, tx - 1)
+            y = self.rng.randint(2, MAP_H - 3)
+            if self.grid[y][x].terrain in ("open", "mud", "road"):
+                self.grid[y][x].mine = True
+        # Crater field in open ground.
+        for _ in range(55):
+            x = self.rng.randint(8, wx - 2)
+            y = self.rng.randint(1, MAP_H - 2)
+            if self.grid[y][x].terrain == "open":
+                self.set_cell(x, y, self.rng.choice(["crater", "crater", "mud", "foxhole"]))
+        # Woods clusters and hills.
+        for _ in range(6):
+            cx = self.rng.randint(4, wx - 2)
+            cy = self.rng.randint(2, MAP_H - 3)
+            for _ in range(self.rng.randint(7, 14)):
+                x = int(clamp(cx + self.rng.randint(-2, 2), 1, MAP_W - 2))
+                y = int(clamp(cy + self.rng.randint(-2, 2), 1, MAP_H - 2))
+                if self.grid[y][x].terrain == "open":
+                    self.set_cell(x, y, self.rng.choice(["woods", "woods", "hill"]))
+        # Small building compound with doors.
+        bx, by = self.rng.randint(11, 16), self.rng.randint(3, MAP_H - 8)
+        for x in range(bx, bx + 5):
+            for y in (by, by + 4):
+                self.set_cell(x, y, "building")
+        for y in range(by, by + 5):
+            for x in (bx, bx + 4):
+                self.set_cell(x, y, "building")
+        self.set_cell(bx + 2, by + 4, "door")
+        self.set_cell(bx + 1, by, "window")
+        self.set_cell(bx + 3, by, "window")
+        # A lighter wooden hut demonstrates bullet penetration through thin walls.
+        hx,hy=bx+7,max(2,by-1)
+        if hx+3<MAP_W-2:
+            for xx in range(hx,hx+4):
+                self.set_cell(xx,hy,"woodwall");self.set_cell(xx,hy+3,"woodwall")
+            for yy in range(hy,hy+4):
+                self.set_cell(hx,yy,"woodwall");self.set_cell(hx+3,yy,"woodwall")
+            self.set_cell(hx+1,hy+3,"door")
+            self.set_cell(hx+2,hy,"window")
+        # Stream and bridges sometimes.
+        if self.rng.random() < .55:
+            sx = self.rng.randint(18, 23)
+            bridge_ys = {road_y, self.rng.randint(4, MAP_H - 5)}
+            for y in range(MAP_H):
+                self.set_cell(sx, y, "bridge" if y in bridge_ys else "water")
+        # Defensive wall fragments.
+        for _ in range(12):
+            x = self.rng.randint(tx - 2, MAP_W - 3)
+            y = self.rng.randint(2, MAP_H - 3)
+            if self.grid[y][x].terrain == "open":
+                self.set_cell(x, y, "wall")
+
+    # --------------------------------------------------------------- spawning
+    def add_unit(self, faction: str, role: str, x: float, y: float) -> Unit:
+        d = ROLES[role]
+        weapon = d["weapon"]
+        mag = WEAPONS[weapon]["mag"]
+        u = Unit(
+            uid=self.next_uid, faction=faction, role=role, x=x, y=y,
+            hp=float(d["hp"]), max_hp=float(d["hp"]), weapon_name=weapon,
+            ammo=mag, magazines=[mag for _ in range(max(0, d.get("mags", 4) - 1))],
+            grenades=d.get("grenades", 0), smoke_grenades=d.get("smoke", 0),
+            rifle_grenades=d.get("rifle_grenades", 0), satchel=d.get("satchel", 0),
+            med_supplies=d.get("med", 0), tools=d.get("tools", 0),
+            mortar_shells=d.get("mortar", 0), crew=d.get("crew", 1),
+            assistant_alive=(role in ("Machine Gunner", "HMG Crew")),
+            barrel_spares=2 if role in ("Machine Gunner", "HMG Crew") else 0,
+            facing=0 if faction == "player" else 180,
+        )
+        self.next_uid += 1
+        self.units.append(u)
+        return u
+
+    def spawn_default_forces(self):
+        player_roles = [
+            "Rifleman", "Rifleman", "Machine Gunner", "Sniper", "Medic",
+            "Engineer", "Recon", "Grenadier", "Assault", "Automatic Rifleman",
+            "Marksman", "HMG Crew", "Mortar Team"
+        ]
+        slots = [(2 + i % 4, 3 + (i // 4) * 5 + (i % 2)) for i in range(len(player_roles))]
+        for role, (x, y) in zip(player_roles, slots):
+            self.add_unit("player", role, x, min(y, MAP_H - 2))
+        enemy_pool = ["Rifleman", "Rifleman", "Machine Gunner", "Marksman", "Assault", "Grenadier", "Engineer", "Medic", "Automatic Rifleman", "HMG Crew"]
+        n = DIFFICULTY[self.difficulty]["enemy"]
+        spots = []
+        tx = MAP_W - 10
+        for y in range(2, MAP_H - 2):
+            if self.grid[y][tx].terrain in ("trench", "firing_step"):
+                spots.append((tx, y))
+        self.rng.shuffle(spots)
+        for i in range(n):
+            role = enemy_pool[i % len(enemy_pool)]
+            x, y = spots[i % len(spots)]
+            if self.unit_at(x, y) is not None:
+                y = int(clamp(y + 1, 1, MAP_H - 2))
+            u = self.add_unit("enemy", role, x, y)
+            if role in ("Machine Gunner", "HMG Crew"):
+                u.deployed = True
+                u.fire_lane = True
+                u.fire_lane_center = 180
+                u.arc_width = 90
+
+    # ------------------------------------------------------------- utilities
+    def add_log(self, msg: str):
+        self.log.append(msg)
+        self.log = self.log[-12:]
+
+    def emit(self, event_type: str, **payload):
+        payload["type"] = event_type
+        self.events.append(payload)
+
+    def drain_events(self) -> List[dict]:
+        out, self.events = self.events, []
+        return out
+
+    def get_unit(self, uid: Optional[int]) -> Optional[Unit]:
+        return next((u for u in self.units if u.uid == uid), None)
+
+    def unit_at(self, x: int, y: int, include_incap=True) -> Optional[Unit]:
+        for u in self.units:
+            if not u.alive:
+                continue
+            if not include_incap and not u.combat_effective:
+                continue
+            if int(round(u.x)) == x and int(round(u.y)) == y:
+                return u
+        return None
+
+    def living(self, faction: Optional[str] = None) -> List[Unit]:
+        return [u for u in self.units if u.alive and (faction is None or u.faction == faction)]
+
+    @staticmethod
+    def in_bounds(x: int, y: int) -> bool:
+        return 0 <= x < MAP_W and 0 <= y < MAP_H
+
+    def line_cells(self, a, b) -> List[Coord]:
+        x0, y0 = (int(round(a[0])), int(round(a[1])))
+        x1, y1 = (int(round(b[0])), int(round(b[1])))
+        cells = []
+        dx, dy = abs(x1-x0), abs(y1-y0)
+        sx, sy = (1 if x0 < x1 else -1), (1 if y0 < y1 else -1)
+        err = dx-dy
+        while True:
+            cells.append((x0,y0))
+            if x0 == x1 and y0 == y1: break
+            e2 = 2*err
+            if e2 > -dy: err -= dy; x0 += sx
+            if e2 < dx: err += dx; y0 += sy
+        return cells
+
+    def line_info(self, a, b) -> Tuple[bool, float, int, float]:
+        """clear, smoke density, soft penetration cost, maximum intervening height."""
+        smoke = 0.0
+        soft_pen = 0
+        max_h = -9
+        cells = self.line_cells(a, b)
+        for x, y in cells[1:-1]:
+            c = self.grid[y][x]
+            smoke += c.smoke
+            if c.terrain == "hill":
+                max_h = max(max_h, TERRAIN[c.terrain]["height"])
+            if c.terrain == "door" and not c.door_open:
+                return False, smoke, 99, max_h
+            if c.terrain in ("woods", "sandbags", "door", "woodwall", "window"):
+                soft_pen += TERRAIN[c.terrain]["pen"]
+            elif TERRAIN[c.terrain]["blocks"]:
+                return False, smoke, 99, max_h
+        # reverse-slope abstraction: a hill between two lower positions blocks sight/fire.
+        sh = TERRAIN[self.grid[int(round(a[1]))][int(round(a[0]))].terrain]["height"]
+        th = TERRAIN[self.grid[int(round(b[1]))][int(round(b[0]))].terrain]["height"]
+        if max_h > max(sh, th) and len(cells) > 3:
+            return False, smoke, soft_pen, max_h
+        return True, smoke, soft_pen, max_h
+
+    def trench_corner_blocked(self, a: Unit, b: Unit) -> bool:
+        if dist(a, b) > 5.0:
+            return False
+        ax, ay = a.tile; bx, by = b.tile
+        if self.grid[ay][ax].terrain != "trench" or self.grid[by][bx].terrain != "trench":
+            return False
+        # If endpoints sit in differently oriented trench pieces without straight connection,
+        # treat the corner as blind until somebody peeks/moves around it.
+        aa, ba = self.grid[ay][ax].axis, self.grid[by][bx].axis
+        return aa is not None and ba is not None and aa != ba and self.time > a.peek_until
+
+    def can_see(self, observer: Unit, target: Unit) -> bool:
+        if not observer.combat_effective or not target.alive:
+            return False
+        d = dist(observer, target)
+        oh = TERRAIN[self.grid[observer.tile[1]][observer.tile[0]].terrain]["height"]
+        th = TERRAIN[self.grid[target.tile[1]][target.tile[0]].terrain]["height"]
+        role_spot = ROLES[observer.role]["spot"] + STANCE[observer.stance]["spot"] + max(0, oh-th)*2.0
+        conceal = TERRAIN[self.grid[target.tile[1]][target.tile[0]].terrain]["conceal"] / 10
+        if target.stance == "prone": conceal += 2.0
+        if target.signature > 0: conceal -= min(3.0, target.signature / 18)
+        if self.weather == "fog": role_spot -= 3.0
+        if d > role_spot - conceal:
+            return False
+        clear, smoke, _, _ = self.line_info(observer.pos, target.pos)
+        if not clear or smoke >= 1.6:
+            return False
+        if self.trench_corner_blocked(observer, target):
+            return False
+        return True
+
+    def visible_to(self, faction: str, target: Unit) -> bool:
+        if target.faction == faction:
+            return True
+        attr = "spotted_player_until" if faction == "player" else "spotted_enemy_until"
+        return getattr(target, attr) > self.time
+
+    def update_spotting(self):
+        for target in self.living():
+            for faction in ("player", "enemy"):
+                if target.faction == faction: continue
+                observers = [u for u in self.living(faction) if u.combat_effective]
+                if any(self.can_see(o, target) for o in observers):
+                    if faction == "player": target.spotted_player_until = self.time + 2.2
+                    else: target.spotted_enemy_until = self.time + 2.2
+                    self.intel[faction][target.uid] = {"pos": (target.x, target.y), "seen": self.time, "role": target.role}
+        # engineers/recon reveal adjacent mines.
+        for u in self.living():
+            if u.role not in ("Engineer", "Recon"): continue
+            ux, uy = u.tile
+            radius = 3 if u.role == "Engineer" else 2
+            for y in range(max(0,uy-radius), min(MAP_H,uy+radius+1)):
+                for x in range(max(0,ux-radius), min(MAP_W,ux+radius+1)):
+                    if self.grid[y][x].mine and math.hypot(x-ux,y-uy) <= radius:
+                        if u.faction == "player": self.grid[y][x].mine_seen_player = True
+                        else: self.grid[y][x].mine_seen_enemy = True
+
+    def effective_cover(self, attacker: Unit, target: Unit) -> float:
+        tx, ty = target.tile
+        c = self.grid[ty][tx]
+        cover = float(TERRAIN[c.terrain]["cover"])
+        # Directional trench cover: strongest when fire crosses the trench, weak along it.
+        if c.terrain in ("trench", "firing_step") and c.axis:
+            shot = angle_to(target, attacker)
+            axis_deg = 0 if c.axis == "H" else 90
+            along = min(angle_diff(shot, axis_deg), angle_diff(shot, axis_deg + 180))
+            if along < 28:
+                cover = 1.0  # enfilade
+            else:
+                cover = 5.0
+        # flanking/rear fire defeats some cover.
+        incoming = angle_to(target, attacker)
+        flank = angle_diff(target.facing, incoming)
+        if flank > 120: cover -= 2
+        elif flank > 70: cover -= 1
+        # stance changes exposed body area.
