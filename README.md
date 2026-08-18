@@ -26,8 +26,9 @@ The first launch also starts a background download for the optional CC0 combat-a
 ## Main menu
 
 - **Continue** — return to the current battle.
-- **Play** — open skirmish setup and generate a new procedural battlefield.
-- **Settings** — default simulation speed, combat audio and help-overlay settings.
+- **Play** — open skirmish setup, choose your difficulty and build a custom force roster before generating a new procedural battlefield.
+- **Settings** — default simulation speed, combat audio, fullscreen, FPS counter and help-overlay settings.
+- **Help** — open the field manual with controls, specialist roles and tactical basics.
 - **Quit** — exit.
 - **Esc in battle** — pause and return to the main menu.
 
@@ -36,8 +37,8 @@ The first launch also starts a background download for the optional CC0 combat-a
 ### Selection and movement
 
 - **Left click:** select a friendly unit.
-- **Drag left mouse:** box-select.
-- **Shift + left click:** add/remove from selection.
+- **Drag left mouse:** box-select. The selection rectangle is drawn while dragging.
+- **Shift + left click / Shift-drag:** add/remove units without clearing the current selection.
 - **Right click ground:** move selected units using the active formation.
 - **Shift + right click:** queue a movement waypoint/order.
 - **Ctrl + 1..9:** assign selected units to a control group.
@@ -56,6 +57,8 @@ The first launch also starts a background download for the optional CC0 combat-a
 
 ### Fire and tactical orders
 
+Units now begin battles on **Fire at Will** by default. You can still change discipline per selection with F7 or the command bar.
+
 - **Right click visible enemy:** fire with the selected unit's current fire mode.
 - **Shift + right click enemy:** queue that attack after existing orders.
 - **A:** aimed fire.
@@ -69,6 +72,8 @@ The first launch also starts a background download for the optional CC0 combat-a
 - **F7:** cycle fire discipline: Hold / Return Fire / Fire at Will / High-Confidence Only.
 - **F8:** cycle target priority: Nearest / Exposed / Specialist / Suppressed.
 - **Tab:** known-threat / movement-exposure overlay.
+- **Hold Left Alt over a tile:** show tile cover, concealment, movement cost, smoke, height, directional cover and known exposure threat.
+- **F11:** toggle fullscreen.
 
 ### Weapon handling
 
@@ -117,6 +122,18 @@ The first launch also starts a background download for the optional CC0 combat-a
 - **T:** dig trench.
 - **4:** place wire.
 - **U:** Bangalore/demolition breach on adjacent wire.
+
+## Force roster builder
+
+Before a battle, the skirmish setup screen lets you choose exactly which friendly units deploy.
+
+- Up to **16** friendly units can be selected.
+- Each role has `-` and `+` controls.
+- **Balanced Preset** restores the recommended mixed roster.
+- **Clear** empties the roster so you can build from scratch.
+- At least one unit is required to start.
+
+Available roles: Rifleman, Machine Gunner, Sniper, Medic, Engineer, Recon, Grenadier, Assault, Automatic Rifleman, Marksman, HMG Crew and Mortar Team.
 
 ## Context command bar
 
@@ -185,6 +202,19 @@ If an asset is absent, the game continues without it. Blood has a procedural fal
 - Grenades, rifle grenades, satchels, mortars and delayed support fire.
 - Medics, bleeding, dragging and carrying casualties.
 - Safe/fast/manual routing and coordinated covering advances.
+
+## Usability / bugfix pass
+
+The current build also fixes several UI problems found during playtesting:
+
+- tile information no longer appears on every hover; it only appears while **Left Alt** is held;
+- tile-intel lines use proper vertical spacing instead of overlapping;
+- menu hover highlighting now updates outside battle;
+- box selection has a visible translucent rectangle while dragging;
+- clicking empty map terrain clears selection unless Shift is held;
+- horizontal/vertical drag boxes are recognised instead of requiring large movement on both axes;
+- battle restarts preserve the chosen player roster;
+- fullscreen falls back to a safe windowed mode if the display driver rejects the requested fullscreen mode.
 
 ## Testing
 
