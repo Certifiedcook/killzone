@@ -33,6 +33,7 @@ def main():
 
     run("self_test.py")
     run("regression_test.py")
+    run("multiplayer_test.py")
     run("ui_smoke_test.py")
     try:
         __import__("pygame")

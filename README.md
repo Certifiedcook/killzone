@@ -2,6 +2,20 @@
 
 Kill Zone is a top-down realtime infantry tactics prototype built around suppression, prepared defenses, smoke, maneuver, trench fighting, morale, casualty handling, and small-unit command.
 
+## Multiplayer alpha
+
+The main menu now includes **Multiplayer** for two-player battles through an authoritative dedicated server. The browser defaults to `88.99.98.156:25503`; players can edit the address, choose a display name, create or join a public room, ready up as Blue or Red, and command a symmetric force on the existing procedural battlefields. Simulation, fog of war, hit resolution, construction, and command validation run on the server, while clients receive perspective-filtered snapshots at 10 Hz. Multiplayer matches cannot be paused or accelerated.
+
+This is a friends-only networking alpha: transport is unencrypted TCP and there is not yet an account, reconnect, matchmaking, chat, or anti-abuse system. Do not reuse a private password as a room password.
+
+To build the root-level dedicated-server archive:
+
+```bat
+python build_multiplayer_server.py --zip
+```
+
+Extract the archive into `/home/container` so `app.py` is directly at `/home/container/app.py`. Keep the Python app file as `app.py`, requirements file as `requirements.txt`, and its allocation on TCP port `25503`. The included `SERVER_SETUP.txt` contains the same deployment checklist.
+
 ## Operations & Engineering expansion
 
 The current expansion adds a second battle direction and a larger pre-battle command layer:
@@ -65,11 +79,11 @@ python benchmark.py
 python build_release.py --zip
 ```
 
-The validation stack contains 71 historical model tests, 37 focused maintenance/expansion regressions, a dependency-free UI smoke test, and a real Pygame runtime/render smoke test. `stress_test.py` adds configurable Easy/Hard/Veteran Assault or Defense matrices with numerical, bounds, cache, transient-effect, and stale-state invariants.
+The validation stack contains 71 historical model tests, focused maintenance/expansion regressions, a two-client authoritative multiplayer integration test, a dependency-free UI smoke test, and a real Pygame runtime/render smoke test. `stress_test.py` adds configurable Easy/Hard/Veteran Assault or Defense matrices with numerical, bounds, cache, transient-effect, and stale-state invariants.
 
 ## Source layout
 
-`src/source_loader.py` reconstructs the historical compressed source and appends `src/maintenance_extension.py` before the entry point. The three runtime/test loaders use that single assembly path. `build_release.py` materializes a normal standalone `kill_zone.py` for distribution.
+`src/source_loader.py` reconstructs the historical compressed source and appends the maintenance and multiplayer extensions before the entry point. The runtime/test loaders use that single assembly path. `build_release.py` materializes a normal standalone `kill_zone.py` plus the small shared networking module for distribution; `build_multiplayer_server.py` creates the separate dedicated-server bundle.
 
 ## Previous stability and performance pass
 

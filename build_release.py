@@ -22,6 +22,7 @@ SUPPORT_FILES = (
     "validate.py",
     "regression_test.py",
     "runtime_smoke_test.py",
+    "multiplayer_test.py",
     "stress_test.py",
     "benchmark.py",
 )
@@ -38,6 +39,15 @@ def build_release(output: Path):
     (output / "kill_zone.py").write_text(game_source(ROOT), encoding="utf-8", newline="\n")
     (output / "self_test.py").write_text(test_source(ROOT, "self_test_v6.py.gz"), encoding="utf-8", newline="\n")
     (output / "ui_smoke_test.py").write_text(test_source(ROOT, "ui_smoke_v6.py.gz"), encoding="utf-8", newline="\n")
+    (output / "src").mkdir(exist_ok=True)
+    shutil.copy2(ROOT / "src" / "__init__.py", output / "src" / "__init__.py")
+    shutil.copy2(ROOT / "src" / "multiplayer_net.py", output / "src" / "multiplayer_net.py")
+    (output / "multiplayer_server").mkdir(exist_ok=True)
+    shutil.copy2(ROOT / "multiplayer_server" / "app.py", output / "multiplayer_server" / "app.py")
+    shutil.copy2(
+        ROOT / "multiplayer_server" / "requirements.txt",
+        output / "multiplayer_server" / "requirements.txt",
+    )
     for name in SUPPORT_FILES:
         shutil.copy2(ROOT / name, output / name)
 

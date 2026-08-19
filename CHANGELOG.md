@@ -73,3 +73,10 @@
 - Added a standalone source/release materializer with optional ZIP output.
 - Consolidated duplicated source reconstruction into `src/source_loader.py`.
 - Added an offline/CI switch for optional presentation-asset downloads.
+# Multiplayer alpha
+
+- Added a two-player public server browser, create/join lobby, Blue/Red slots, ready flow, match result handling, and a configurable server address defaulting to `88.99.98.156:25503`.
+- Added an authoritative dedicated Python server with room isolation, command ownership/rate validation, 10 Hz perspective-filtered snapshots, fog-of-war contacts, disconnect forfeits, and headless Pygame simulation.
+- Network-enabled movement, direct fire, grenades, smoke, suppression, overwatch, reloading, stance, deployment, fire modes, weapon servicing, mortar fire, assault/bounding/fallback movement, engineer construction, doctrine, discipline, target priority, autonomy, and hold orders.
+- Added symmetric PvP force generation, Red-side client normalization, framed JSON transport, a background desktop networking thread, and an upload-ready server bundle builder.
+- Added protocol, authority, perspective, real two-client socket, and multiplayer render smoke coverage.

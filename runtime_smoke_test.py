@@ -29,6 +29,61 @@ def main():
         app.state = state
         app.draw()
 
+    app.state = "multiplayer"
+    app.network_status = "ONLINE · SERVER 0.1.0"
+    app.network_online = 2
+    app.network_rooms = [
+        {
+            "id": "KZ9403",
+            "name": "Friends Battle",
+            "players": 1,
+            "capacity": 2,
+            "locked": False,
+            "status": "lobby",
+            "battlefield": "farmland",
+        }
+    ]
+    app.draw()
+    multiplayer_browser = output_dir / "multiplayer_browser.png"
+    pygame.image.save(app.screen, multiplayer_browser)
+    assert multiplayer_browser.stat().st_size > 1_000
+
+    app.state = "multiplayer_lobby"
+    app.network_connection_id = "blue"
+    app.network_lobby = {
+        "id": "KZ9403",
+        "name": "Friends Battle",
+        "status": "lobby",
+        "seed": 9403,
+        "battlefield": "farmland",
+        "players": [
+            {"id": "blue", "name": "Commander Blue", "slot": 0, "ready": True},
+            {"id": "red", "name": "Commander Red", "slot": 1, "ready": False},
+        ],
+    }
+    app.draw()
+    multiplayer_lobby = output_dir / "multiplayer_lobby.png"
+    pygame.image.save(app.screen, multiplayer_lobby)
+    assert multiplayer_lobby.stat().st_size > 1_000
+
+    authoritative = kz.create_network_pvp_game(seed=9403, battlefield="farmland")
+    replica = kz.create_network_pvp_game(seed=9403, battlefield="farmland")
+    kz._network_normalize_client_factions(replica, "enemy")
+    kz.apply_network_snapshot(replica, kz.serialize_network_snapshot(authoritative, "enemy"))
+    app.game = replica
+    app.state = "game"
+    app.battle_active = True
+    app.network_side = "enemy"
+    app.network_match_active = True
+    app.selected = [unit.uid for unit in replica.living("player")[:4]]
+    app.show_help = False
+    app.draw()
+    multiplayer_match = output_dir / "multiplayer_match_red.png"
+    pygame.image.save(app.screen, multiplayer_match)
+    assert multiplayer_match.stat().st_size > 1_000
+    app.network_match_active = False
+    app.network_side = None
+
     app.state = "operation_setup"
     app.draw()
     operations_setup = output_dir / "operations_setup.png"

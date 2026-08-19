@@ -36,6 +36,7 @@ def game_source(root: Path) -> str:
     extensions = [
         _read_gzip(root / "src" / "perf_extension_v6.py.gz"),
         (root / "src" / "maintenance_extension.py").read_text(encoding="utf-8"),
+        (root / "src" / "multiplayer_extension.py").read_text(encoding="utf-8"),
     ]
     return base[: -len(ENTRY_POINT)] + "\n" + "\n".join(extensions) + ENTRY_POINT
 
