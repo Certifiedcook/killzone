@@ -1,6 +1,50 @@
-# Kill Zone — Vertical Slice Battle Pass
+# Kill Zone — Stability & Performance Pass
 
-This build turns the realtime sandbox into a structured assault battle. The core flow is now **force selection → mission briefing → deployment → staged battle objectives → after-action report**. NATO unit markers remain deliberately static; this pass improves battle structure and feedback rather than animating the symbols.
+This build hardens the vertical slice rather than expanding its content scope. It targets the mid-30 FPS regression, stale combat-state graphics, and troops routing too quickly. The graphics remain deliberately simple and there are **no graphics-quality presets**; performance is improved by eliminating redundant work instead.
+
+## What changed in this pass
+
+### Performance and diagnostics
+
+- Static battlefield terrain is rendered once to a cached world surface and reused until terrain actually changes.
+- Rendering strictly culls off-camera units, corpses, blood, projectiles, explosions and tactical arcs.
+- Dynamic smoke/fire/ground-suppression tiles are collected at a throttled rate instead of scanning and redrawing every terrain detail every frame.
+- Repeated UI text and dust-puff surfaces are cached.
+- LOS and line-of-fire results use short-lived caches keyed to movement/time/terrain state.
+- Battle-intensity presentation logic runs at 4 Hz instead of being recomputed every rendered frame.
+- Existing pathfinding budgets, threat-grid caches, indexed occupancy and staggered AI remain intact.
+- F9 now exposes a more useful profiler: frame, map/static/dynamic, units/effects, UI, simulation, AI, pathfinding and LOS timing plus active effect counts.
+
+### Combat-state cleanup
+
+- A centralized combat-exit cleanup removes Overwatch, fire lanes, reaction targets, queued paths, assault/bounding assignments and drag/carry references when a soldier dies, becomes incapacitated or surrenders.
+- This fixes the ghost **Overwatch lines remaining after their owner dies** and prevents the same stale-reference class of bug elsewhere.
+- Non-combat-effective selected units are automatically removed from selection.
+
+### Morale, cohesion and retreat behavior
+
+- Morale now has hysteresis: **Steady → Shaken → Pinned → Breaking → Routing/Rallying** rather than instantly crossing a flee threshold.
+- Suppression by itself primarily pins troops; healthy soldiers no longer immediately run because one suppression value spikes.
+- Severe morale/cohesion failure must persist for several seconds before routing.
+- Casualty shock is partly temporary and decays as a unit recovers.
+- Squad morale influences individual breaking delay, so one shaken soldier does not automatically collapse a healthy fireteam.
+- Routed troops pick protected rearward positions, can rally out of contact, and return to player/AI control once sufficiently recovered.
+- AI specialists preserve themselves more sensibly during a genuine collapse: crew-served weapons pack up and medics/mortars/snipers seek deeper cover.
+- Sector collapse and local surrender also require sustained instability rather than a brief half-second dip.
+
+### New control tools
+
+- **HOLD**: selected troops resist voluntary withdrawal longer. They can still be pinned and can still collapse under catastrophic conditions.
+- **FALLBACK**: click the command, then right-click a map position to designate where the selected troops should retreat/rally if they break.
+- The selected-unit sidebar now shows morale state, major morale-pressure/support factors, time under break pressure, and the assigned fallback/HOLD state.
+
+## Validation
+
+- **71/71 model regression tests pass.**
+- **UI smoke test passes**, including terrain-cache reuse and HOLD/FALLBACK frontend wiring.
+- 40-second Easy/Hard/Veteran stress battles completed without numerical-state failures or stale Overwatch/fire-lane state on combat-exited units.
+- A 16-unit mass-order benchmark remains around ~1.4 ms per fixed simulation step on this test host; the main FPS work in this pass is render-side caching/culling rather than reducing simulation fidelity.
+
 
 ## Vertical-slice battle systems
 
@@ -46,7 +90,7 @@ Tests:
 py self_test.py
 ```
 
-The current model suite contains **63 tests**. `ui_smoke_test.py` provides a dependency-free frontend wiring smoke test using a small Pygame stub.
+The current model suite contains **71 tests**. `ui_smoke_test.py` provides a dependency-free frontend wiring smoke test using a small Pygame stub.
 
 ## Major changes in this pass
 
