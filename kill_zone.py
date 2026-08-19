@@ -1,10 +1,11 @@
 from pathlib import Path
+import gzip
 
-# The GitHub connector used for this project only supports UTF-8 text writes and
-# cannot stream the 116 KB source file in one local-file upload. The authoritative
-# source is therefore stored in ordered, readable fragments. They are concatenated
-# byte-for-byte here and executed as one module.
+# Exact game source is stored as ordered gzip fragments because the connected
+# GitHub transport is much more reliable with small binary blobs.
 _root = Path(__file__).resolve().parent
-_parts = sorted((_root / "src" / "kill_zone_parts").glob("part_*.pyfrag"))
-_source = "".join(p.read_text(encoding="utf-8") for p in _parts)
+_parts = sorted((_root / "src" / "kill_zone_parts_v4").glob("part_*.pyfrag.gz"))
+if not _parts:
+    raise RuntimeError("Kill Zone source fragments are missing")
+_source = "".join(gzip.decompress(p.read_bytes()).decode("utf-8") for p in _parts)
 exec(compile(_source, str(_root / "kill_zone_monolithic.py"), "exec"), globals(), globals())

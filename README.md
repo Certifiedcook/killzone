@@ -1,231 +1,203 @@
-# Kill Zone — Realtime Tactical Infantry Prototype
+# Kill Zone — Command & Performance Pass
 
-**Kill Zone** is a top-down realtime infantry tactics game built around suppression, positioning, trench fighting, fog of war, weapon handling, casualty management and coordinated movement.
+Kill Zone is a top-down realtime infantry tactics prototype built around suppression, prepared defenses, smoke, maneuver, trench fighting, morale, casualty handling, and small-unit command.
 
-The game is a systems-heavy prototype rather than a finished release. The current goal is to make the infantry combat and controls good before adding campaign or mod systems.
+This build expands the command layer while deliberately **not** adding new logistics systems yet.
 
-## Run on Windows
+## Run
 
-Double-click:
+Windows:
 
 ```text
 launch_kill_zone.bat
 ```
 
-The launcher installs the pinned Pygame dependency if needed and then starts the game.
-
-Manual launch:
+Manual:
 
 ```bat
 py -m pip install -r requirements.txt
 py kill_zone.py
 ```
 
-The first launch also starts a background download for the optional CC0 combat-audio and blood-sprite pack. If the download is unavailable, the game still runs: combat remains functional and blood falls back to procedural decals. See `ASSET_SOURCES.md` for the source/licence register.
-
-## Main menu
-
-- **Continue** — return to the current battle.
-- **Play** — open skirmish setup, choose your difficulty and build a custom force roster before generating a new procedural battlefield.
-- **Settings** — default simulation speed, combat audio, fullscreen, FPS counter and help-overlay settings.
-- **Help** — open the field manual with controls, specialist roles and tactical basics.
-- **Quit** — exit.
-- **Esc in battle** — pause and return to the main menu.
-
-## Core realtime controls
-
-### Selection and movement
-
-- **Left click:** select a friendly unit.
-- **Drag left mouse:** box-select. The selection rectangle is drawn while dragging.
-- **Shift + left click / Shift-drag:** add/remove units without clearing the current selection.
-- **Right click ground:** move selected units using the active formation.
-- **Shift + right click:** queue a movement waypoint/order.
-- **Ctrl + 1..9:** assign selected units to a control group.
-- **1..9:** recall a control group.
-- **F4:** cycle formation: Wedge / Line / Column / Spread.
-- **X:** cycle route policy: Fast / Safe / Manual.
-- **Backspace:** cancel current orders.
-
-### Time control
-
-- **Space:** pause/unpause.
-- **Hold ` (backquote):** tactical slow motion at 0.25x while issuing orders.
-- **-:** 0.5x simulation speed.
-- **=:** 1x simulation speed.
-- **]:** 2x simulation speed.
-
-### Fire and tactical orders
-
-Units now begin battles on **Fire at Will** by default. You can still change discipline per selection with F7 or the command bar.
-
-- **Right click visible enemy:** fire with the selected unit's current fire mode.
-- **Shift + right click enemy:** queue that attack after existing orders.
-- **A:** aimed fire.
-- **F:** snap fire.
-- **W:** rapid fire.
-- **Q:** area suppression mode.
-- **O:** directional Overwatch toward mouse position.
-- **I:** MG/HMG fire lane toward mouse position.
-- **C:** coordinated covering advance.
-- **F3:** bounding-overwatch advance mode.
-- **F7:** cycle fire discipline: Hold / Return Fire / Fire at Will / High-Confidence Only.
-- **F8:** cycle target priority: Nearest / Exposed / Specialist / Suppressed.
-- **Tab:** known-threat / movement-exposure overlay.
-- **Hold Left Alt over a tile:** show tile cover, concealment, movement cost, smoke, height, directional cover and known exposure threat.
-- **F11:** toggle fullscreen.
-
-### Weapon handling
-
-- **R:** tactical reload; retains the partial magazine.
-- **Shift + R:** emergency reload; faster but discards the partial magazine.
-- **J:** clear jam.
-- **D:** deploy/pack MG, HMG or mortar.
-- **B:** MG/HMG barrel change.
-- **F9:** transfer a compatible magazine to an adjacent friendly.
-- Sustained automatic fire produces heat; overheated weapons stop until cooled or serviced.
-
-### Stance and close combat
-
-- **Z:** cycle Standing / Crouched / Prone.
-- **V:** fix/remove bayonet.
-- **P:** peek from cover.
-- A bayonet-equipped soldier right-clicking an adjacent enemy in a connected trench can perform a trench assault.
-
-### Grenades and support
-
-- **G:** hand grenade.
-- **Shift + C:** increase grenade cooking time.
-- **S:** smoke grenade.
-- **L:** rifle grenade.
-- **K:** satchel charge.
-- **M:** on-map mortar HE.
-- **N:** on-map mortar smoke.
-- **H:** off-map HE support.
-- **Y:** off-map smoke support.
-
-### Medics and casualties
-
-- Units can be **healthy, wounded, incapacitated, killed or surrendered**.
-- Incapacitated soldiers bleed out unless treated.
-- **Right click wounded/incapacitated ally with Medic:** stabilize/treat.
-- **Right click incapacitated ally with another soldier:** drag.
-- **Alt + right click incapacitated ally:** carry. Carrying prevents firing.
-- Persistent blood decals mark substantial wounds and fatalities.
-
-### Engineers
-
-- **E on wire:** cut wire.
-- **E on known mine:** clear mine.
-- **E on suitable terrain:** build sandbags.
-- **Shift + E:** deliberate mine scan.
-- **T:** dig trench.
-- **4:** place wire.
-- **U:** Bangalore/demolition breach on adjacent wire.
-
-## Force roster builder
-
-Before a battle, the skirmish setup screen lets you choose exactly which friendly units deploy.
-
-- Up to **16** friendly units can be selected.
-- Each role has `-` and `+` controls.
-- **Balanced Preset** restores the recommended mixed roster.
-- **Clear** empties the roster so you can build from scratch.
-- At least one unit is required to start.
-
-Available roles: Rifleman, Machine Gunner, Sniper, Medic, Engineer, Recon, Grenadier, Assault, Automatic Rifleman, Marksman, HMG Crew and Mortar Team.
-
-## Context command bar
-
-The bottom command bar exposes common actions without requiring keyboard memorisation:
-
-`SUPPRESS | OVERWATCH | GRENADE | SMOKE | RELOAD | STANCE | FORMATION | DISCIPLINE | PRIORITY | BOUND`
-
-The keyboard shortcuts remain available for faster control.
-
-## The ten control/tactics upgrades
-
-The current build includes the ten systems selected for the realtime control pass:
-
-1. **Tactical slow motion** while holding backquote.
-2. **Control groups and formation movement.**
-3. **Context-sensitive bottom command bar.**
-4. **Fire discipline and target-priority policies.**
-5. **Queued movement and attack orders.**
-6. **Bounding-overwatch advance.**
-7. **Known-threat and route-exposure visualisation.** Hidden enemies are not leaked by the overlay.
-8. **Visible tracer travel and near-miss suppression along the bullet path.**
-9. **Richer trench geometry:** traverses, firing steps, dugouts and interrupted sight lines.
-10. **Symmetric fog-of-war intelligence:** enemy AI uses sightings and last-known contacts rather than tracking hidden player positions.
-
-## Military-map unit presentation
-
-On-map units use a deliberately restrained **APP-6 / MIL-STD-2525-inspired tactical-map presentation**:
-
-- friendly land units use a blue/cyan rectangular frame;
-- hostile units use a red diamond frame;
-- infantry uses the familiar crossed-diagonal infantry base;
-- game-specific class abbreviations such as `MG`, `MED`, `SN` and `DMR` are displayed separately as role metadata.
-
-The class abbreviations are **not claimed to be official APP-6 entity symbols**. This avoids inventing fake NATO symbology for game-specific roles while retaining the recognisable affiliation language.
-
-## Combat audio and blood effects
-
-The presentation layer can use online-sourced CC0 assets for:
-
-- 5.56 rifle / automatic-rifle fire;
-- 7.62 rifle / sniper / HMG fire;
-- SMG fire;
-- explosion variants;
-- hurt/grunt variants;
-- death/pain vocalisation;
-- blood decal sprite.
-
-Gunfire, explosions, hurt sounds and death sounds are triggered from simulation events rather than being tied to animation frames. Audio has no gameplay effect and there is no sound-detection mechanic.
-
-If an asset is absent, the game continues without it. Blood has a procedural fallback.
-
-## Major combat systems
-
-- Realtime simultaneous simulation at a fixed 30 Hz model step.
-- Directional facing, flank/rear bonuses and enfilade.
-- Directional trenches, Overwatch and MG fire lanes.
-- Fog of war, recon, signatures and last-known contacts.
-- Suppression, morale, cohesion, routing and surrender.
-- Standing/crouched/prone stances.
-- Riflemen, MGs, snipers, medics, engineers, recon, grenadiers, assault infantry, automatic riflemen, marksmen, HMG crews and mortar teams.
-- Magazine-state ammunition, tactical/emergency reloads and ammo sharing.
-- MG heat, jams, barrel changes and assistant-gunner degradation.
-- Smoke density/drift, weather, fire and persistent battlefield damage.
-- Mines, wire, sandbags, foxholes, bunkers, buildings, doors, windows and destructible cover.
-- Elevation, reverse slopes and penetration through light structures.
-- Grenades, rifle grenades, satchels, mortars and delayed support fire.
-- Medics, bleeding, dragging and carrying casualties.
-- Safe/fast/manual routing and coordinated covering advances.
-
-## Usability / bugfix pass
-
-The current build also fixes several UI problems found during playtesting:
-
-- tile information no longer appears on every hover; it only appears while **Left Alt** is held;
-- tile-intel lines use proper vertical spacing instead of overlapping;
-- menu hover highlighting now updates outside battle;
-- box selection has a visible translucent rectangle while dragging;
-- clicking empty map terrain clears selection unless Shift is held;
-- horizontal/vertical drag boxes are recognised instead of requiring large movement on both axes;
-- battle restarts preserve the chosen player roster;
-- fullscreen falls back to a safe windowed mode if the display driver rejects the requested fullscreen mode.
-
-## Testing
-
-The headless model test suite does not require Pygame:
+Tests:
 
 ```bat
 py self_test.py
 ```
 
-The current suite covers the original realtime combat systems plus formations, queued commands, fire discipline, bounding overwatch, symmetric fog-of-war contact memory, combat events/blood decals, richer trench generation and the media manifest.
+The current model suite contains **50 tests**. `ui_smoke_test.py` provides a dependency-free frontend wiring smoke test using a small Pygame stub.
 
-## Project scope
+## Major changes in this pass
 
-For now the project intentionally does **not** prioritise campaign progression, modding, expanded mission types or RPG-style squad progression. The next useful work is playtesting, tuning, UI refinement and improving the realtime tactical AI rather than adding another large content layer.
+### Performance
+
+- Rendering FPS is **uncapped by default**. The fixed-step simulation remains 30 Hz.
+- Settings can restore a 60/120/240 FPS cap if desired.
+- Threat routing uses cached faction threat grids rather than recalculating every enemy for every A* node.
+- Unit lookup and occupancy are indexed.
+- Mass pathfinding is budgeted across simulation ticks instead of all selected units calculating A* in one frame.
+- AI decisions are similarly budgeted/staggered.
+- Tracers, impacts, dust effects, and simultaneous audio playback are capped/throttled.
+- The simulation prevents a runaway catch-up spiral if the machine temporarily falls behind.
+- **F9** toggles an on-screen performance profiler with simulation/path/AI timing.
+
+### Larger battlefield and camera
+
+- Battlefield increased to **56×36 tiles**.
+- Fixed camera viewport keeps the UI readable.
+- Arrow keys or screen-edge scrolling pan the camera.
+- Hold middle mouse and drag to pan.
+- Mouse wheel zooms.
+- **Home** focuses the camera on the current selection.
+- Fullscreen remains available with **F11**.
+
+### Squads and selection
+
+- Friendly and hostile troops are organized into persistent four-man fireteams/squads.
+- Click `SQUAD A`, `SQUAD B`, etc. to select a squad.
+- **Alt+1..5** reassigns the current selection to Squad A–E.
+- Existing Ctrl+1..9 control groups remain available.
+- A bottom unit-card strip gives health/suppression status and direct selection for up to 16 deployed troops.
+- Visible drag-box selection remains supported with the camera and zoom system.
+
+### Pre-battle deployment and reserves
+
+- Skirmish setup now accepts an optional numeric **map seed**.
+- Enemy strength is shown as an **estimate**, not an exact force count.
+- A configurable number of your chosen troops can be held as reserves.
+- `DEPLOY FORCE` opens a deployment phase before combat.
+- Select units/squads and right-click inside the western deployment zone to position them.
+- Enter or Space begins the battle.
+- **F12** commits held reserves from the western edge during combat.
+
+### Tactical previews
+
+- Hover a visible enemy with a selected soldier to see:
+  - line of fire;
+  - hit chance;
+  - range;
+  - target cover;
+  - smoke and penetration effects;
+  - target suppression state.
+- Hover ground with a selected soldier to preview the chosen route, approximate ETA, and threat along each route segment.
+- Hold **Left Alt** over a tile for detailed terrain intelligence and directional cover edges:
+  - green = strong protection;
+  - yellow = partial protection;
+  - red = exposed direction.
+- Ground under sustained fire receives a visible suppression tint.
+- Unit suppression is displayed as a progressively stronger halo.
+
+### Dedicated Assault order
+
+Press **F2** or click `ASSAULT`, then right-click the objective.
+
+The selected group is divided into a support element and assault element. Supporting automatic/precision weapons establish suppressive fire, available assault troops can deploy smoke, and the assault element advances when sufficient suppression or preparation time has developed. Supporting fire continues while the assault closes.
+
+The player can still override every individual soldier at any point.
+
+### AI coordination
+
+- AI automatic weapons preferentially establish support-by-fire.
+- Rifle/assault elements can maneuver while squad support is firing.
+- AI flank decisions consider known threat rather than blindly taking the shortest route.
+- Defenders can fall back toward generated secondary defensive positions.
+- Snipers relocate after repeated firing rather than remaining permanently in one nest.
+- Veteran AI makes more aggressive use of coordinated maneuver and smoke.
+- Difficulty now changes **force size, decision cadence, and tactical coordination** rather than receiving hidden weapon-accuracy bonuses.
+
+### Formation and traffic behavior
+
+- Existing line, column, wedge, and spread formations remain.
+- Large groups automatically compress toward column when their route crosses trenches, doors, bridges, or similar narrow movement corridors.
+- Friendly movement has local waiting/repath behavior to reduce trench traffic jams and units stacking on the same point.
+
+### Snipers and mortars
+
+Snipers gain additional concealment and first-shot effectiveness when settled, prepared, and low-signature. Firing raises their signature; AI snipers will relocate after repeated shots.
+
+Mortars now have:
+
+- a 5-tile minimum range;
+- a 19-tile effective maximum range;
+- ranging dispersion;
+- improving follow-up solutions;
+- improved accuracy when Recon/Marksman observers can see near the target;
+- HE and smoke ammunition as before.
+
+### Crew-served weapons
+
+Machine-gun/HMG crews can lose an assistant gunner from casualties. Adjacent friendly infantry can replace the assistant. An incapacitated HMG crew can also be re-crewed by an adjacent infantryman through the normal contextual friendly interaction.
+
+### Battlefield effects and destruction
+
+- HE explosions create capped dust-puff effects and local screen shake when near the camera.
+- Woods, walls, buildings, sandbags, and firing positions can continue degrading or collapsing under heavy fire/explosives.
+- Blood, craters, rubble, fire, smoke, cover wear, and suppression persist as battlefield state.
+
+### Map generation
+
+Procedural maps now deliberately construct a tactical problem rather than distributing terrain as noise:
+
+- primary defensive line;
+- secondary fallback line;
+- communication trenches;
+- strongpoints and bunkers;
+- wire belt and mine patches;
+- deliberate breaches;
+- cratered assault lanes;
+- wooded flank routes;
+- central ruins/compound;
+- firing steps and dugouts.
+
+### Battle record / after-action
+
+The simulation records significant battle events such as casualties, explosions, mortar ranging, reserve commitment, surrender, and assaults.
+
+At victory/defeat the after-action overlay shows:
+
+- remaining troops;
+- casualties;
+- shots/hits;
+- accuracy;
+- kills;
+- grenades/smoke used;
+- reserve commitment;
+- recent battle timeline;
+- duration and map seed.
+
+### Pause planning
+
+Space still pauses the simulation, but movement and queued orders can be issued while paused. Selected-unit planned paths and queued movement markers are drawn on the battlefield so the plan is readable before resuming.
+
+## Important controls
+
+- **LMB:** select / drag selection box
+- **Shift+LMB:** additive selection
+- **RMB:** movement, target attack, or active contextual command
+- **Shift+RMB:** queue order
+- **Space:** pause and plan
+- **F2:** Assault order
+- **F3:** bounding overwatch
+- **F4:** formation
+- **F7:** fire discipline
+- **F8:** target priority
+- **F9:** performance profiler
+- **F10:** selected-unit autonomy
+- **F11:** fullscreen
+- **F12:** commit reserves
+- **Left Alt:** directional tile/cover intelligence
+- **Tab:** threat overlay
+- **Alt+1..5:** assign Squad A–E
+- **Ctrl+1..9:** assign control group
+- **1..9:** recall control group
+- **Arrow keys / screen edge:** pan camera
+- **MMB drag:** pan camera
+- **Mouse wheel:** zoom
+- **Home:** focus current selection
+- **` (backquote):** tactical slow motion
+
+The in-game Field Manual contains the rest of the weapon, engineer, casualty, stance, support-fire, and specialist controls.
+
+## Scope intentionally deferred
+
+No new logistics layer was added in this pass. Existing magazine/ammunition mechanics remain, but ammo bearers, supply crates, dropped-equipment economy, expanded resupply chains, and similar systems are being held for a later dedicated logistics pass.
