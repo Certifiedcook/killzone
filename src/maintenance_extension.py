@@ -2509,6 +2509,8 @@ def _operation_init(
     self.squad_doctrine = {}
     self._engineer_builder_timer = 0.0
     self._last_engineer_builder_update = 0.0
+    self.construction_reservations = {}
+    self._defense_attack_order_timer = 0.0
     _operation_previous_init(
         self,
         seed=seed,
@@ -2652,20 +2654,27 @@ def _operation_static_count(self, faction):
     )
 
 
-def _operation_can_build(self, engineer, kind, pos):
+def _operation_validate_build_site(self, faction, kind, pos, include_reservations=True):
     if kind not in ENGINEER_BUILD_TYPES:
         return False, "Unknown construction"
-    if engineer.role != "Engineer" or not engineer.combat_effective:
-        return False, "Select a combat-effective engineer"
-    if engineer.action_timer > 0 or engineer.order == "build":
-        return False, "Engineer is already occupied"
-    if not self.in_bounds(*pos) or dist(engineer.pos, pos) > 2.2:
-        return False, "Build within two tiles of the engineer"
+    if not self.in_bounds(*pos):
+        return False, "Choose a tile inside the battlefield"
+    pos = (int(pos[0]), int(pos[1]))
+    if include_reservations and pos in self.construction_reservations:
+        return False, "Another construction is already planned there"
     cell = self.grid[pos[1]][pos[0]]
     if self.unit_at(*pos) is not None:
         return False, "Construction tile is occupied"
     definition = ENGINEER_BUILD_TYPES[kind]
-    if "role" in definition and self.static_emplacement_count(engineer.faction) >= 6:
+    queued_emplacements = sum(
+        ENGINEER_BUILD_TYPES[reservation[1]].get("role") is not None
+        for reservation in self.construction_reservations.values()
+        if reservation[2] == faction
+    )
+    if (
+        "role" in definition
+        and self.static_emplacement_count(faction) + queued_emplacements >= 6
+    ):
         return False, "Temporary emplacement cap reached (6)"
     if "role" in definition and cell.terrain not in (
         "open",
@@ -2678,9 +2687,144 @@ def _operation_can_build(self, engineer, kind, pos):
         "hill",
     ):
         return False, "Static weapons require firm, open ground"
-    if "terrain" in definition and cell.terrain not in ("open", "mud", "rubble", "crater", "foxhole"):
+    if "terrain" in definition and cell.terrain not in (
+        "open",
+        "mud",
+        "rubble",
+        "crater",
+        "foxhole",
+    ):
         return False, "Defenses require clear ground"
     return True, ""
+
+
+def _operation_can_build(self, engineer, kind, pos):
+    if engineer.role != "Engineer" or not engineer.combat_effective:
+        return False, "No combat-effective engineer is available"
+    if engineer.action_timer > 0 or engineer.order == "build":
+        return False, "Engineer is already occupied"
+    if not self.in_bounds(*pos) or dist(engineer.pos, pos) > 2.2:
+        return False, "Engineer has not reached the construction site"
+    return self.validate_build_site(engineer.faction, kind, pos, include_reservations=False)
+
+
+def _operation_builder_staging_position(self, engineer, pos):
+    choices = []
+    px, py = pos
+    for radius in (1, 2):
+        for y in range(max(1, py - radius), min(MAP_H - 1, py + radius + 1)):
+            for x in range(max(1, px - radius), min(MAP_W - 1, px + radius + 1)):
+                if max(abs(x - px), abs(y - py)) != radius:
+                    continue
+                if not self.passable(x, y, engineer):
+                    continue
+                choices.append((math.hypot(x - engineer.x, y - engineer.y), x, y))
+        if choices:
+            break
+    if not choices:
+        return None
+    choices.sort()
+    return choices[0][1], choices[0][2]
+
+
+def _operation_queue_construction(self, faction, kind, pos, preferred_engineers=None):
+    pos = (int(pos[0]), int(pos[1]))
+    valid, reason = self.validate_build_site(faction, kind, pos)
+    if not valid:
+        return None, reason
+    engineers = [
+        unit
+        for unit in self.living(faction)
+        if unit.role == "Engineer"
+        and unit.combat_effective
+        and unit.action_timer <= 0
+        and not getattr(unit, "_construction_queued", False)
+        and unit.order != "build"
+    ]
+    if not engineers:
+        return None, "No available engineer can take this project"
+    preferred_ids = {unit.uid for unit in (preferred_engineers or [])}
+    engineers.sort(key=lambda unit: (0 if unit.uid in preferred_ids else 1, dist(unit.pos, pos)))
+    assignment = None
+    for engineer in engineers:
+        staging = self.builder_staging_position(engineer, pos)
+        if staging is None:
+            continue
+        path = self.find_path(engineer, staging, "safe") if engineer.tile != staging else []
+        if engineer.tile != staging and not path:
+            continue
+        assignment = engineer, staging
+        break
+    if assignment is None:
+        return None, "No engineer can reach an adjacent build position"
+
+    engineer, staging = assignment
+    engineer._construction_queued = True
+    engineer._construction_kind = kind
+    engineer._construction_pos = pos
+    engineer._construction_staging = staging
+    engineer.target_pos = pos
+    engineer.command_queue = []
+    self.construction_reservations[pos] = (engineer.uid, kind, faction)
+    self.issue_move([engineer], staging, mode="safe", formation="column")
+    self.notify(
+        f"ENGINEER EN ROUTE — {ENGINEER_BUILD_TYPES[kind]['label']}",
+        kind="good" if faction == "player" else "danger",
+        duration=3.0,
+    )
+    return engineer, ""
+
+
+def _operation_cancel_construction_assignment(self, engineer, reason=None):
+    pos = getattr(engineer, "_construction_pos", None)
+    if pos is not None:
+        reservation = self.construction_reservations.get(pos)
+        if reservation and reservation[0] == engineer.uid:
+            self.construction_reservations.pop(pos, None)
+    engineer._construction_queued = False
+    engineer._construction_kind = None
+    engineer._construction_pos = None
+    engineer._construction_staging = None
+    engineer.target_pos = None
+    if reason and engineer.faction == "player":
+        self.notify(reason, kind="danger", duration=2.5)
+
+
+def _operation_update_engineer_assignments(self):
+    for engineer in list(self.units):
+        if not getattr(engineer, "_construction_queued", False):
+            continue
+        if not engineer.combat_effective:
+            self.cancel_construction_assignment(engineer, "Construction cancelled — engineer unavailable")
+            continue
+        kind = getattr(engineer, "_construction_kind", None)
+        pos = getattr(engineer, "_construction_pos", None)
+        if kind not in ENGINEER_BUILD_TYPES or pos is None:
+            self.cancel_construction_assignment(engineer)
+            continue
+        valid, reason = self.validate_build_site(
+            engineer.faction,
+            kind,
+            pos,
+            include_reservations=False,
+        )
+        if not valid:
+            self.cancel_construction_assignment(engineer, f"Construction cancelled — {reason.lower()}")
+            continue
+        if dist(engineer.pos, pos) <= 2.2:
+            engineer._construction_queued = False
+            started, reason = self.begin_construction(engineer, kind, pos)
+            if not started:
+                self.cancel_construction_assignment(engineer, f"Construction delayed — {reason.lower()}")
+            continue
+        if engineer.order == "move" and (engineer.path or engineer.waypoints):
+            continue
+        staging = self.builder_staging_position(engineer, pos)
+        if staging is None:
+            self.cancel_construction_assignment(engineer, "Construction cancelled — site cannot be approached")
+            continue
+        engineer._construction_staging = staging
+        self.issue_move([engineer], staging, mode="safe", formation="column")
 
 
 def _operation_begin_construction(self, engineer, kind, pos):
@@ -2707,6 +2851,7 @@ def _operation_finish_construction(self, engineer):
     kind = getattr(engineer, "_construction_kind", None)
     pos = getattr(engineer, "_construction_pos", None)
     if kind not in ENGINEER_BUILD_TYPES or pos is None:
+        self.cancel_construction_assignment(engineer)
         engineer.order = "idle"
         return None
     definition = ENGINEER_BUILD_TYPES[kind]
@@ -2732,8 +2877,13 @@ def _operation_finish_construction(self, engineer):
             _kz_rebuild_indexes(self)
     engineer.order = "idle"
     engineer.target_pos = None
+    reservation = self.construction_reservations.get(pos)
+    if reservation and reservation[0] == engineer.uid:
+        self.construction_reservations.pop(pos, None)
+    engineer._construction_queued = False
     engineer._construction_kind = None
     engineer._construction_pos = None
+    engineer._construction_staging = None
     if built is not None:
         self.notify(
             f"{definition['label']} COMPLETE",
@@ -2745,7 +2895,12 @@ def _operation_finish_construction(self, engineer):
 
 
 RealTimeGame.static_emplacement_count = _operation_static_count
+RealTimeGame.validate_build_site = _operation_validate_build_site
 RealTimeGame.can_build = _operation_can_build
+RealTimeGame.builder_staging_position = _operation_builder_staging_position
+RealTimeGame.queue_construction = _operation_queue_construction
+RealTimeGame.cancel_construction_assignment = _operation_cancel_construction_assignment
+RealTimeGame.update_engineer_assignments = _operation_update_engineer_assignments
 RealTimeGame.begin_construction = _operation_begin_construction
 RealTimeGame.finish_construction = _operation_finish_construction
 
@@ -2885,6 +3040,33 @@ RealTimeGame.activate_defense_wave = _operation_activate_defense_wave
 _operation_previous_ai_decide = RealTimeGame.ai_decide
 
 
+def _operation_defense_attack_destination(self, unit):
+    """Return an open, distributed waypoint that keeps an assault moving east."""
+    primary = self.primary_line_x
+    secondary = self.secondary_line_x
+    command = self.map_features.get("command_post", (MAP_W - 4, MAP_H // 2))
+    if unit.x < primary - 4.5:
+        target_x = primary - 4
+    elif unit.x < primary + 1.5:
+        target_x = primary + 1
+    elif unit.x < secondary - 2.5:
+        target_x = secondary - 2
+    else:
+        target_x = command[0]
+
+    sector_center = {
+        "NORTH": max(4, MAP_H // 6),
+        "CENTRE": MAP_H // 2,
+        "SOUTH": min(MAP_H - 5, MAP_H * 5 // 6),
+    }.get(getattr(unit, "battle_sector", "CENTRE"), MAP_H // 2)
+    lane_offset = ((unit.uid * 3) % 9) - 4
+    target_y = int(clamp(sector_center + lane_offset, 2, MAP_H - 3))
+    if target_x >= command[0] - 1:
+        target_y = int(clamp(command[1] + lane_offset // 2, 2, MAP_H - 3))
+    destination = _operation_open_position(self, target_x, target_y, unit, radius=5)
+    return destination or (int(clamp(target_x, 1, MAP_W - 2)), target_y)
+
+
 def _operation_ai_decide(self, unit):
     if unit.role in STATIC_WEAPON_ROLES:
         return
@@ -2943,7 +3125,7 @@ def _operation_ai_decide(self, unit):
             mode = "rapid" if self.doctrine_for(unit) == "aggressive" and distance < 7 else "normal"
             self.issue_fire(unit, target, mode)
             return
-    destination = self.objectives[min(2, max(0, getattr(unit, "attack_wave", 1) - 1))]["pos"]
+    destination = self.defense_attack_destination(unit)
     if unit.role in ("Machine Gunner", "HMG Crew") and unit.deployed:
         self.toggle_deploy(unit)
         return
@@ -2954,6 +3136,50 @@ def _operation_ai_decide(self, unit):
 
 
 RealTimeGame.ai_decide = _operation_ai_decide
+RealTimeGame.defense_attack_destination = _operation_defense_attack_destination
+
+
+def _operation_update_defense_attack_orders(self, dt):
+    if self.mission_type != "defense":
+        return
+    self._defense_attack_order_timer += dt
+    if self._defense_attack_order_timer < 0.75:
+        return
+    self._defense_attack_order_timer = 0.0
+    for unit in self.living("enemy"):
+        if (
+            not unit.combat_effective
+            or unit.role in STATIC_WEAPON_ROLES
+            or not getattr(unit, "reserve_active", True)
+            or unit.action_timer > 0
+            or unit.order in ("build", "rout", "medic", "deploy", "pack", "clear_jam")
+            or getattr(unit, "_construction_queued", False)
+        ):
+            continue
+        visible = any(
+            target.combat_effective and self.can_see(unit, target)
+            for target in self.living("player")
+        )
+        if visible:
+            continue
+        stalled = unit.order in ("idle", "overwatch", "fire_lane") or (
+            unit.order == "move" and not unit.path and not unit.waypoints
+        )
+        if not stalled:
+            continue
+        if unit.role in ("Machine Gunner", "HMG Crew") and unit.deployed:
+            self.toggle_deploy(unit)
+            continue
+        destination = self.defense_attack_destination(unit)
+        self.issue_move(
+            [unit],
+            destination,
+            mode="safe" if unit.role in ("Medic", "Engineer") else "fast",
+            formation="column",
+        )
+
+
+RealTimeGame.update_defense_attack_orders = _operation_update_defense_attack_orders
 
 
 def _operation_update_defense_stage(self):
@@ -3146,8 +3372,10 @@ def _operation_update(self, dt):
     _operation_previous_update(self, dt)
     if self.paused or self.victory or self.defeat:
         return
+    self.update_engineer_assignments()
     self.update_emplacements()
     self.update_enemy_builders()
+    self.update_defense_attack_orders(dt)
 
 
 RealTimeGame.update = _operation_update
@@ -3554,7 +3782,7 @@ def _operation_draw_build_menu(self):
     pygame.draw.rect(self.screen, COLORS["select"], panel, 2, border_radius=5)
     self.text("ENGINEER CONSTRUCTION", (panel.x + 26, panel.y + 18), 20, "white")
     self.text(
-        "Choose a project, then right-click within two tiles of a selected engineer.",
+        "Choose a project, then place it anywhere reachable. The nearest available engineer responds.",
         (panel.x + 27, panel.y + 51),
         10,
         "muted",
@@ -3585,7 +3813,11 @@ def _operation_draw_command_bar(self):
     if self.state not in ("game", "deployment"):
         return
     units = self.selected_units()
-    engineers = [unit for unit in units if unit.role == "Engineer" and unit.combat_effective]
+    engineers = [
+        unit
+        for unit in self.game.living("player")
+        if unit.role == "Engineer" and unit.combat_effective
+    ]
     rect = self.build_button_rect()
     pygame.draw.rect(self.screen, COLORS["panel2"], rect, border_radius=3)
     pygame.draw.rect(
@@ -3595,7 +3827,7 @@ def _operation_draw_command_bar(self):
         2 if engineers else 1,
         border_radius=3,
     )
-    label = "ENGINEER BUILD [SHIFT+B]" if engineers else "SELECT ENGINEER TO BUILD"
+    label = "ENGINEER BUILD [SHIFT+B]" if engineers else "NO ENGINEER AVAILABLE"
     surface = self.cached_text_surface(label, 9, "select" if engineers else "muted")
     self.screen.blit(surface, (rect.centerx - surface.get_width() // 2, rect.centery - surface.get_height() // 2))
     mobile = [unit for unit in units if unit.role not in STATIC_WEAPON_ROLES]
@@ -3676,6 +3908,23 @@ _operation_previous_draw_map = KillZoneApp.draw_map
 
 def _operation_draw_map(self):
     _operation_previous_draw_map(self)
+    for pos, reservation in self.game.construction_reservations.items():
+        engineer_uid, kind, faction = reservation
+        if faction != "player":
+            continue
+        rect = self.cell_rect(*pos)
+        if not rect.colliderect(self.map_view_rect()):
+            continue
+        pygame.draw.rect(self.screen, COLORS["blue"], rect, 2)
+        pygame.draw.line(self.screen, COLORS["blue"], rect.topleft, rect.bottomright, 1)
+        pygame.draw.line(self.screen, COLORS["blue"], rect.topright, rect.bottomleft, 1)
+        label = self.cached_text_surface(f"BUILD {ENGINEER_BUILD_TYPES[kind]['label']}", 7, "white")
+        self.screen.blit(label, (rect.centerx - label.get_width() // 2, rect.y - 11))
+        engineer = self.game.get_unit(engineer_uid)
+        if engineer and engineer.combat_effective:
+            start = self.world_to_screen(engineer.x, engineer.y)
+            if self.map_view_rect().collidepoint(start):
+                pygame.draw.line(self.screen, COLORS["blue"], start, rect.center, 1)
     if not self.command_mode.startswith("build:"):
         return
     cell = self.map_cell_from_mouse(self.mouse)
@@ -3683,9 +3932,12 @@ def _operation_draw_map(self):
         return
     rect = self.cell_rect(*cell)
     if rect.colliderect(self.map_view_rect()):
-        pygame.draw.rect(self.screen, COLORS["objective"], rect, 3)
-        pygame.draw.line(self.screen, COLORS["objective"], rect.topleft, rect.bottomright, 1)
-        pygame.draw.line(self.screen, COLORS["objective"], rect.topright, rect.bottomleft, 1)
+        kind = self.command_mode.split(":", 1)[1]
+        valid, _reason = self.game.validate_build_site("player", kind, cell)
+        color = COLORS["objective"] if valid else COLORS["danger"]
+        pygame.draw.rect(self.screen, color, rect, 3)
+        pygame.draw.line(self.screen, color, rect.topleft, rect.bottomright, 1)
+        pygame.draw.line(self.screen, color, rect.topright, rect.bottomleft, 1)
 
 
 KillZoneApp.draw_map = _operation_draw_map
@@ -3719,23 +3971,27 @@ def _operation_issue_context(self, cell, append=False):
     if not self.command_mode.startswith("build:"):
         return _operation_previous_issue_context(self, cell, append=append)
     kind = self.command_mode.split(":", 1)[1]
-    engineers = sorted(
-        [unit for unit in self.selected_units() if unit.role == "Engineer" and unit.combat_effective],
-        key=lambda unit: dist(unit.pos, cell),
+    preferred = [
+        unit
+        for unit in self.selected_units()
+        if unit.role == "Engineer" and unit.combat_effective
+    ]
+    engineer, reason = self.game.queue_construction(
+        "player",
+        kind,
+        cell,
+        preferred_engineers=preferred,
     )
-    if not engineers:
-        _qol_notify(self, "Select an engineer before placing construction", kind="danger", duration=2.2)
-        self.command_mode = "normal"
+    if engineer is None:
+        _qol_notify(self, reason, kind="danger", duration=2.4)
         return
-    last_reason = "No engineer can build there"
-    for engineer in engineers:
-        started, reason = self.game.begin_construction(engineer, kind, cell)
-        if started:
-            _qol_notify(self, f"{ENGINEER_BUILD_TYPES[kind]['label']} construction started", kind="good", duration=2.2)
-            self.command_mode = "normal"
-            return
-        last_reason = reason
-    _qol_notify(self, last_reason, kind="danger", duration=2.2)
+    _qol_notify(
+        self,
+        f"{getattr(engineer, 'display_name', 'Engineer')} assigned — moving to {ENGINEER_BUILD_TYPES[kind]['label']}",
+        kind="good",
+        duration=2.6,
+    )
+    self.command_mode = "normal"
 
 
 KillZoneApp.issue_context_command = _operation_issue_context
@@ -3771,13 +4027,20 @@ def _operation_handle_build_menu(self, event):
         return True
     for kind in ENGINEER_BUILD_TYPES:
         if rects[kind].collidepoint(event.pos):
-            if not any(unit.role == "Engineer" and unit.combat_effective for unit in self.selected_units()):
-                _qol_notify(self, "Select an engineer first", kind="danger", duration=1.8)
+            if not any(
+                unit.role == "Engineer" and unit.combat_effective
+                for unit in self.game.living("player")
+            ):
+                _qol_notify(self, "No engineer is available", kind="danger", duration=1.8)
                 self.build_menu_open = False
                 return True
             self.command_mode = f"build:{kind}"
             self.build_menu_open = False
-            _qol_notify(self, f"{ENGINEER_BUILD_TYPES[kind]['label']} ready — right-click near engineer", duration=2.3)
+            _qol_notify(
+                self,
+                f"{ENGINEER_BUILD_TYPES[kind]['label']} ready — click a build site",
+                duration=2.3,
+            )
             return True
     return True
 
@@ -3822,14 +4085,22 @@ def _operation_handle_event(self, event):
                 self.start_battle()
                 return
         if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1 and self.state == "game" and self.command_mode.startswith("build:"):
+                cell = self.map_cell_from_mouse(event.pos)
+                if cell is not None:
+                    self.issue_context_command(cell)
+                    return
             if event.button == 1 and self.build_button_rect().collidepoint(event.pos):
                 if self.state == "deployment":
                     _qol_notify(self, "Construction begins after deployment", kind="danger", duration=1.8)
-                elif any(unit.role == "Engineer" and unit.combat_effective for unit in self.selected_units()):
+                elif any(
+                    unit.role == "Engineer" and unit.combat_effective
+                    for unit in self.game.living("player")
+                ):
                     self.show_help = False
                     self.build_menu_open = True
                 else:
-                    _qol_notify(self, "Select an engineer first", kind="danger", duration=1.8)
+                    _qol_notify(self, "No engineer is available", kind="danger", duration=1.8)
                 return
             if event.button == 3:
                 for squad_id, rect in self.squad_rects().items():

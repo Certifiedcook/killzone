@@ -564,6 +564,25 @@ def test_defense_mode_reverses_deployment_and_commits_three_waves():
     assert game.objective_index == 1
 
 
+def test_defense_attackers_advance_toward_open_assault_waypoints():
+    game = kz.RealTimeGame(
+        seed=1026,
+        difficulty="Hard",
+        operation_config={"mission": "defense", "defense_duration": 180},
+    )
+    attackers = [
+        unit
+        for unit in game.living("enemy")
+        if unit.combat_effective and unit.reserve_active
+    ]
+    initial_average_x = sum(unit.x for unit in attackers) / len(attackers)
+    step(game, 8)
+    surviving_attackers = [unit for unit in attackers if unit.combat_effective]
+    advanced_average_x = sum(unit.x for unit in surviving_attackers) / len(surviving_attackers)
+    assert advanced_average_x > initial_average_x + 5
+    assert any(unit.order in ("move", "fire", "suppress") for unit in surviving_attackers)
+
+
 def test_defense_reserves_enter_from_the_east_only_once():
     game = kz.RealTimeGame(
         seed=1025,
@@ -632,6 +651,23 @@ def test_engineers_construct_defenses_and_static_weapons_for_both_sides():
     app = object.__new__(kz.KillZoneApp)
     app.game = game
     assert 0 not in app.squad_rects()
+
+
+def test_rts_construction_moves_an_available_engineer_to_the_blueprint():
+    game = fresh(1027)
+    engineer = game.add_unit("player", "Engineer", 2, 2)
+    game.add_unit("player", "Rifleman", 3, 2)
+    site = (14, 10)
+
+    assigned, reason = game.queue_construction("player", "sandbags", site)
+    assert assigned is engineer, reason
+    assert site in game.construction_reservations
+    assert engineer.order == "move" and engineer.waypoints
+
+    step(game, 18)
+    assert game.grid[site[1]][site[0]].terrain == "sandbags"
+    assert site not in game.construction_reservations
+    assert engineer.order == "idle"
 
 
 def test_multiseed_simulation_invariants():

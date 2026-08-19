@@ -5,6 +5,7 @@
 ### Operations
 
 - Added Defensive Battle mode with east-side deployment, three timed assault waves, sequential hold objectives, sector stability, a contested command post, and dedicated victory/defeat rules.
+- Defensive attackers now use distributed open assault waypoints and a stalled-order watchdog instead of repeatedly targeting an occupied objective tile.
 - Added Advanced Operations setup for mission type, deterministic battlefield selection, forced/automatic weather, 80/100/125% enemy force strength, and 3/5/7-minute defense duration.
 - Added defense-specific briefing, deployment instructions, objective language, countdown/wave/command-post HUD, and after-action event recording.
 
@@ -17,6 +18,7 @@
 ### Engineering
 
 - Engineers on both factions can now construct sandbags, wire, trenches, MG turrets, field guns, and artillery batteries from a visual `Shift+B` construction palette.
+- Player construction now uses an RTS workflow: choose a project, click a reachable site, and the nearest available engineer automatically moves adjacent to the blueprint before building.
 - Static weapons are destructible combat units with independent direct/indirect fire behavior and no squad-capacity cost.
 - Enemy engineers use the same construction pipeline with AI build choices, build time, cooldowns, and a temporary emplacement cap.
 - Construction currently has no supply cost by design; supplies and logistics are deferred to the next balance update.
@@ -24,7 +26,7 @@
 ### Testing
 
 - Added regressions for deterministic operation options, defense deployment/waves, doctrine policy, and construction for both factions.
-- Expanded the focused maintenance/expansion regression suite from 28 to 33 tests, including east-side defensive reserves.
+- Expanded the focused maintenance/expansion regression suite from 28 to 35 tests, including east-side defensive reserves, advancing defense attackers, and remote engineer construction.
 
 ## Unreleased — release hardening
 

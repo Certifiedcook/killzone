@@ -81,6 +81,42 @@ def main():
     app.finalize_deployment()
 
     engineer = next(unit for unit in app.game.living("player") if unit.role == "Engineer")
+
+    # Exercise the complete RTS construction input path without preselecting
+    # an engineer: hotkey, project choice, map placement, and assignment.
+    app.selected = []
+    app.handle_event(
+        pygame.event.Event(
+            pygame.KEYDOWN,
+            {"key": pygame.K_b, "mod": pygame.KMOD_SHIFT, "unicode": "B"},
+        )
+    )
+    assert app.build_menu_open
+    app.handle_event(
+        pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            {"button": 1, "pos": app.build_menu_rects()["sandbags"].center},
+        )
+    )
+    assert app.command_mode == "build:sandbags"
+    build_site = next(
+        (x, y)
+        for y in range(1, kz.MAP_H - 1)
+        for x in range(1, kz.MAP_W - 1)
+        if app.map_view_rect().collidepoint(app.cell_rect(x, y).center)
+        and app.game.validate_build_site("player", "sandbags", (x, y))[0]
+        and app.game.builder_staging_position(engineer, (x, y)) is not None
+    )
+    app.handle_event(
+        pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            {"button": 1, "pos": app.cell_rect(*build_site).center},
+        )
+    )
+    assert app.command_mode == "normal"
+    assert build_site in app.game.construction_reservations
+    assert getattr(engineer, "_construction_queued", False)
+
     app.selected = [engineer.uid]
     app.show_help = False
     app.build_menu_open = True
