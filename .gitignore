@@ -5,6 +5,8 @@ venv/
 .env
 .DS_Store
 Thumbs.db
+test_output/
+build/
 
 # Optional CC0 media is downloaded at runtime from the documented sources.
 assets/audio/*

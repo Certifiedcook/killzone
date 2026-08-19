@@ -1,4 +1,12 @@
 @echo off
 cd /d "%~dp0"
-py self_test.py
+call validate.bat
+if errorlevel 1 (
+  echo.
+  echo Validation failed.
+  pause
+  exit /b 1
+)
+echo.
+echo All Kill Zone validation passed.
 pause

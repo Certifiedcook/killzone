@@ -1,4 +1,67 @@
-# Kill Zone — Stability & Performance Pass
+# Kill Zone
+
+Kill Zone is a top-down realtime infantry tactics prototype built around suppression, prepared defenses, smoke, maneuver, trench fighting, morale, casualty handling, and small-unit command.
+
+## Current release hardening
+
+The current branch concentrates on correctness, frame pacing, maintainability, and release validation:
+
+- repeated casualty/revival cycles now clean every stale combat reference;
+- cached routes are revalidated when terrain or unit occupancy changes;
+- safe-route A* reads cached threat/occupancy data directly, skips stale heap work, and spreads group searches across fixed ticks;
+- spotting reuses faction lists and rejects out-of-range pairs before LOS work;
+- healthy line-stability values are green, threatened values amber, and collapsed values red;
+- optional asset downloads can be disabled with `KILLZONE_DISABLE_ASSET_DOWNLOADS=1` for offline and CI runs;
+- historical compressed payloads now share one source loader, while current maintenance code remains reviewable plain Python;
+- focused regressions, real headless Pygame rendering, deterministic multi-battle stress tests, a benchmark, and a release builder are included.
+
+The 900-tick Veteran benchmark with a 16-unit player force measured a **10.4 ms mean** and **31.9 ms p95** fixed update on this host. Path work measured **2.0 ms mean** and **13.4 ms p95**. Actual results depend on CPU, battle state, and map seed.
+
+## Quick start
+
+On Windows, double-click:
+
+```text
+launch_kill_zone.bat
+```
+
+The launcher prefers a local `.venv`, falls back to `py` or `python`, and installs the pinned Pygame dependency when needed.
+
+Manual launch:
+
+```bat
+python -m pip install -r requirements.txt
+python kill_zone.py
+```
+
+## Validation and packaging
+
+Run the complete quick suite:
+
+```bat
+validate.bat
+```
+
+Include the multi-seed stress matrix:
+
+```bat
+validate.bat --stress
+```
+
+Run the repeatable simulation benchmark or build a standalone single-file release:
+
+```bat
+python benchmark.py
+python build_release.py --zip
+```
+
+The validation stack contains 71 historical model tests, 8 focused maintenance regressions, a dependency-free UI smoke test, and a real Pygame runtime/render smoke test. `stress_test.py` adds configurable Easy/Hard/Veteran battle matrices with numerical, bounds, cache, transient-effect, and stale-state invariants.
+
+## Source layout
+
+`src/source_loader.py` reconstructs the historical compressed source and appends `src/maintenance_extension.py` before the entry point. The three runtime/test loaders use that single assembly path. `build_release.py` materializes a normal standalone `kill_zone.py` for distribution.
+
+## Previous stability and performance pass
 
 This build hardens the vertical slice rather than expanding its content scope. It targets the mid-30 FPS regression, stale combat-state graphics, and troops routing too quickly. The graphics remain deliberately simple and there are **no graphics-quality presets**; performance is improved by eliminating redundant work instead.
 
@@ -43,7 +106,7 @@ This build hardens the vertical slice rather than expanding its content scope. I
 - **71/71 model regression tests pass.**
 - **UI smoke test passes**, including terrain-cache reuse and HOLD/FALLBACK frontend wiring.
 - 40-second Easy/Hard/Veteran stress battles completed without numerical-state failures or stale Overwatch/fire-lane state on combat-exited units.
-- A 16-unit mass-order benchmark remains around ~1.4 ms per fixed simulation step on this test host; the main FPS work in this pass is render-side caching/culling rather than reducing simulation fidelity.
+- The current 16-unit benchmark and its latency distribution are documented at the top of this file; the renderer and simulation both remain instrumented through F9.
 
 
 ## Vertical-slice battle systems
@@ -65,8 +128,6 @@ This build hardens the vertical slice rather than expanding its content scope. I
 The existing optimization architecture is retained: pathfinding/AI work remains budgeted across simulation ticks, threat and occupancy lookups are cached, transient effects are capped, and render FPS remains uncapped by default. Logistics expansion is still intentionally deferred.
 
 
-Kill Zone is a top-down realtime infantry tactics prototype built around suppression, prepared defenses, smoke, maneuver, trench fighting, morale, casualty handling, and small-unit command.
-
 This build expands the command layer while deliberately **not** adding new logistics systems yet.
 
 ## Run
@@ -84,13 +145,13 @@ py -m pip install -r requirements.txt
 py kill_zone.py
 ```
 
-Tests:
+Historical model tests only:
 
 ```bat
 py self_test.py
 ```
 
-The current model suite contains **71 tests**. `ui_smoke_test.py` provides a dependency-free frontend wiring smoke test using a small Pygame stub.
+The historical model suite contains **71 tests**. Use `validate.bat` for the complete current validation stack.
 
 ## Major changes in this pass
 
