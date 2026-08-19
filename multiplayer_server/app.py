@@ -94,6 +94,7 @@ class Room:
     game: Any = None
     winner: str | None = None
     task: asyncio.Task | None = None
+    pending_events: list[dict[str, Any]] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -217,6 +218,8 @@ class KillZoneServer:
             roster=room.roster,
             battlefield=room.battlefield,
         )
+        room.game.drain_events()
+        room.pending_events.clear()
         for player in room.players:
             faction = "player" if player.slot == 0 else "enemy"
             snapshot = kz.serialize_network_snapshot(room.game, faction)
@@ -242,15 +245,24 @@ class KillZoneServer:
                 updates = 0
                 while now >= next_tick and updates < 5:
                     room.game.update(tick)
+                    room.pending_events.extend(room.game.drain_events())
+                    room.pending_events = room.pending_events[-128:]
                     next_tick += tick
                     updates += 1
                 if now >= next_snapshot:
                     for player in list(room.players):
                         faction = "player" if player.slot == 0 else "enemy"
+                        state = kz.serialize_network_snapshot(room.game, faction)
+                        state["events"] = kz.filter_network_events(
+                            room.game,
+                            faction,
+                            room.pending_events,
+                        )
                         await player.send(
                             "snapshot",
-                            state=kz.serialize_network_snapshot(room.game, faction),
+                            state=state,
                         )
+                    room.pending_events.clear()
                     next_snapshot = now + 0.1
                 winner = kz.network_pvp_winner(room.game)
                 if winner:

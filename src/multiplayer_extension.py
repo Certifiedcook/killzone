@@ -232,6 +232,45 @@ def _network_json_value(value):
     return None
 
 
+def _network_effect_observed(game, perspective, position, radius):
+    if not isinstance(position, (list, tuple)) or len(position) != 2:
+        return False
+    return any(
+        unit.combat_effective and dist(unit.pos, position) <= radius
+        for unit in game.living(perspective)
+    )
+
+
+def filter_network_events(game, perspective, events):
+    """Keep exact visible/local effects while coarsening audible-only combat."""
+    filtered = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        kind = str(event.get("type", ""))
+        position = event.get("pos")
+        local = event.get("faction") == perspective
+        observed = local or _network_effect_observed(
+            game,
+            perspective,
+            position,
+            22.0 if kind == "explosion" else 15.0,
+        )
+        if observed or position is None:
+            filtered.append(dict(event))
+            continue
+        audible_radius = 44.0 if kind == "explosion" else 34.0 if kind == "shot" else 18.0
+        if kind not in ("shot", "explosion") or not _network_effect_observed(
+            game, perspective, position, audible_radius
+        ):
+            continue
+        coarse = dict(event)
+        coarse["pos"] = [round(float(position[0]) / 6.0) * 6, round(float(position[1]) / 6.0) * 6]
+        coarse["audible_only"] = True
+        filtered.append(coarse)
+    return filtered
+
+
 def serialize_network_snapshot(game, perspective):
     units = []
     for unit in game.units:
@@ -296,6 +335,31 @@ def serialize_network_snapshot(game, perspective):
         "units": units,
         "cells": cells,
         "contacts": contacts,
+        "tracers": [
+            [list(tracer.a), list(tracer.b), round(tracer.life, 4), round(tracer.total, 4)]
+            for tracer in game.tracers[-96:]
+            if _network_effect_observed(game, perspective, tracer.a, 16.0)
+            or _network_effect_observed(game, perspective, tracer.b, 16.0)
+        ],
+        "impacts": [
+            [round(impact.x, 3), round(impact.y, 3), impact.kind, round(impact.life, 4)]
+            for impact in game.impacts[-96:]
+            if _network_effect_observed(game, perspective, (impact.x, impact.y), 16.0)
+        ],
+        "explosions": [
+            [
+                round(explosion.x, 3),
+                round(explosion.y, 3),
+                round(explosion.timer, 4),
+                round(explosion.radius, 3),
+                round(explosion.damage, 3),
+                round(explosion.suppression, 3),
+                explosion.kind,
+                explosion.faction,
+            ]
+            for explosion in game.explosions[-32:]
+            if _network_effect_observed(game, perspective, (explosion.x, explosion.y), 24.0)
+        ],
         "winner": winner,
     }
 
@@ -306,6 +370,31 @@ def apply_network_snapshot(game, snapshot):
     wind = snapshot.get("wind")
     if isinstance(wind, list) and len(wind) == 2:
         game.wind = (float(wind[0]), float(wind[1]))
+
+    game.tracers = [
+        Tracer(tuple(record[0]), tuple(record[1]), float(record[2]), float(record[3]))
+        for record in snapshot.get("tracers", [])
+        if isinstance(record, list) and len(record) >= 4
+    ]
+    game.impacts = [
+        Impact(float(record[0]), float(record[1]), str(record[2]), float(record[3]))
+        for record in snapshot.get("impacts", [])
+        if isinstance(record, list) and len(record) >= 4
+    ]
+    game.explosions = [
+        Explosion(
+            float(record[0]),
+            float(record[1]),
+            float(record[2]),
+            float(record[3]),
+            float(record[4]),
+            float(record[5]),
+            str(record[6]),
+            str(record[7]),
+        )
+        for record in snapshot.get("explosions", [])
+        if isinstance(record, list) and len(record) >= 8
+    ]
 
     for x, y in list(getattr(game, "network_dynamic_cells", set())):
         baseline = game.network_initial_cells[y][x]
@@ -688,7 +777,11 @@ def _network_process_messages(self):
             )
             _network_normalize_client_factions(game, side)
             game.network_replica = True
-            apply_network_snapshot(game, message.get("snapshot", {}))
+            initial_snapshot = message.get("snapshot", {})
+            apply_network_snapshot(game, initial_snapshot)
+            for event in initial_snapshot.get("events", []):
+                if isinstance(event, dict):
+                    self.play_event(event)
             self.game = game
             self.network_side = side
             self.network_match_active = True
@@ -705,7 +798,11 @@ def _network_process_messages(self):
                 self.camera_y = MAP_H // 2
                 self.clamp_camera()
         elif message_type == "snapshot" and getattr(self, "network_match_active", False):
-            apply_network_snapshot(self.game, message.get("state", {}))
+            state = message.get("state", {})
+            apply_network_snapshot(self.game, state)
+            for event in state.get("events", []):
+                if isinstance(event, dict):
+                    self.play_event(event)
         elif message_type == "match_end":
             self.network_match_active = False
             self.network_match_result = str(message.get("result", "defeat"))

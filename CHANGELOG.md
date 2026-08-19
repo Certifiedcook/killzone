@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased — Combat Feel 2.1
+
+### Firefights
+
+- Added weapon-specific burst lengths, recovery pauses, recoil buildup/decay, and modest close-range lethality so rifles, automatic weapons, support guns, and precision weapons no longer share a metronomic firing rhythm.
+- Deliberate direct and suppressive fire now checks the intended lane for friendlies. Enemy troops seek another safe visible target or offset a suppression lane; already-airborne rounds retain physical friendly-fire risk.
+- Near misses now make soldiers face the threat, flinch, duck, or go prone according to danger and suppression. Localized hits expose a clear wounded reaction.
+- Added material-specific impact events, near-miss cracks, restrained automatic-fire mix ducking, and player/hostile tracer accents.
+
+### Tactics, movement, and feedback
+
+- Added target, plan, movement, and crew-weapon deployment commitments to stop AI order thrashing while preserving emergency reactions to suppression, morale, ammunition, and jams.
+- Enemy specialists withdraw into cover when badly wounded or completely depleted; smoke is refused when it would blind an active friendly support lane.
+- Squad plans use stable lateral lanes, formation moves reserve distinct arrival cells, stalled routes surface a reason and force enemy re-planning, and arrivals settle facing the intended threat.
+- Added a short preparation beat, sustained contact/engagement presentation states, order-state tooltips, lane-risk markers, reaction indicators, and a restrained delay before the after-action panel.
+- Squad focus now eases the camera instead of snapping. Camera shake and edge scrolling are independently configurable and persist with existing settings.
+
+### Testing
+
+- Added deterministic coverage for firing-lane refusal and AI retargeting, weapon bursts, danger reactions, support-lane smoke safety, formation arrival slots, AI preparation/commitment, new audio layers, and multiplayer state replication.
+
+## Unreleased — repository cleanup
+
+- Removed the unreferenced original and v4 game fragments, superseded v4/v5 test payloads, a stale one-off overnight report, and a redundant validation launcher.
+- Consolidated the active historical game into one deterministic legacy archive instead of ten versioned fragments.
+- Renamed the active historical performance and test payloads around their purpose rather than an obsolete version number.
+- Centralized release-directory safety and ZIP creation shared by the game and dedicated-server builders.
+- Expanded ignore rules for common tool caches, coverage output, and logs, and documented the authoritative source/test layout.
+
+## Unreleased — Combat 2.0
+
+### Ballistics and wounds
+
+- Replaced instant small-arms damage with persistent ballistic rounds that travel over simulation ticks, collide with soldiers and terrain, can cause friendly fire, and emit readable short tracer segments.
+- Near-miss suppression now follows each round's physical trajectory instead of applying only around the selected target.
+- Added material interception, cover damage, and penetration energy loss for hard and soft battlefield structures.
+- Added localized head, torso, arm, and leg wounds with disorientation, bleeding, accuracy, reload, stamina, and mobility consequences. Medic treatment now reduces localized trauma.
+- Added reacquisition and post-movement weapon-settling time while preserving deliberate moving fire at its existing accuracy cost.
+
+### Tactics and identity
+
+- Added a squad-level enemy planner with support-by-fire, maneuver, assault, sustainment, defensive screen, covered-lane, reserve, reposition, and favorable-counterattack states.
+- Preserved the operation planner's terrain-aware staged assault routes, then hands contact fights to the new suppression-and-maneuver logic.
+- Added deterministic full names and callsigns from a 1,600-combination identity pool, with compact squad-slot labels and multiplayer replication.
+- Unit tooltips now expose full identity, localized trauma, and observed AI tactical assignment/phase; wounded units receive an additional battlefield status corner.
+
+### Testing
+
+- Added deterministic tests for delayed projectile resolution, direct wounds, trajectory suppression, friendly fire, hard-cover interception, wound penalties, 1,000 unique generated names, offensive/defensive squad jobs, and multiplayer state round trips.
+- Extended stress invariants to cover projectile counts and all localized wound values.
+
 ## Unreleased — Operations & Engineering
 
 ### Operations
@@ -80,3 +131,10 @@
 - Network-enabled movement, direct fire, grenades, smoke, suppression, overwatch, reloading, stance, deployment, fire modes, weapon servicing, mortar fire, assault/bounding/fallback movement, engineer construction, doctrine, discipline, target priority, autonomy, and hold orders.
 - Added symmetric PvP force generation, Red-side client normalization, framed JSON transport, a background desktop networking thread, and an upload-ready server bundle builder.
 - Added protocol, authority, perspective, real two-client socket, and multiplayer render smoke coverage.
+# Audio and visual overhaul
+
+- Added distinct layered procedural reports for rifles, heavy weapons, SMGs, artillery, and explosions with stereo positioning, distance tails, debris, rumble, ambience ducking, and optional recorded-sample foreground layers.
+- Added weather-, stage-, intensity-, fire-, and suppression-responsive ambience without using audio to reveal hidden contacts.
+- Added deterministic cached terrain micro-detail, animated rain/fog, fire embers, muzzle flashes, explosion blooms, shock rings, enhanced tracers/impacts, selection brackets, squad pips, stance marks, suppression accents, and map/menu atmosphere.
+- Replicated transient combat effects and audio events in authoritative multiplayer snapshots.
+- Added deterministic audio mix, weather, terrain, network-effect, dependency-free UI, and real Pygame render coverage.

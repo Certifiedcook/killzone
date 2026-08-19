@@ -21,6 +21,7 @@ def main():
     assert app.screen.get_size() == (kz.WINDOW_W, kz.WINDOW_H)
     if pygame.mixer.get_init():
         assert set(kz.TACTICAL_AUDIO_VOLUMES).issubset(app._tactical_audio)
+        assert set(kz.PRESENTATION_AUDIO_DURATIONS).issubset(app._presentation_audio)
         assert app.play_tactical_sound("command")
     output_dir = Path("test_output")
     output_dir.mkdir(exist_ok=True)
@@ -336,6 +337,21 @@ def main():
     for unit, snapshot in zip(readable_units, snapshots, strict=True):
         for field, value in snapshot.items():
             setattr(unit, field, value)
+
+    focus = app.selected_units()[0]
+    app.game.weather = "rain"
+    app.game.tracers.append(kz.Tracer(focus.pos, (focus.x + 7, focus.y + 2), 0.18, 0.20))
+    app.game.impacts.append(kz.Impact(focus.x + 5, focus.y + 1, "dirt", 0.18))
+    app.game.explosions.append(
+        kz.Explosion(focus.x + 8, focus.y + 3, 0.35, 2.4, 75, 90, "HE", "enemy")
+    )
+    app.play_event({"type": "shot", "weapon": "Rifle", "pos": focus.pos, "faction": "player"})
+    app.play_event({"type": "explosion", "pos": (focus.x + 8, focus.y + 3), "radius": 2.4})
+    app.draw()
+    presentation = output_dir / "presentation_overhaul.png"
+    pygame.image.save(app.screen, presentation)
+    assert presentation.stat().st_size > 1_000
+    assert app._presentation_events
 
     app.mouse = (0, 0)
     app.draw()

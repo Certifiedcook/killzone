@@ -16,6 +16,7 @@ def assert_invariants(game):
     assert len(game.impacts) <= 140
     assert len(game.blood) <= 180
     assert len(game.dust) <= 90
+    assert len(game.ballistic_rounds) <= 360
     assert len(game.notifications) <= 8
     assert len(game._los_cache) <= 701
     assert len(game._line_cache) <= 901
@@ -31,6 +32,10 @@ def assert_invariants(game):
             unit.cohesion,
             unit.stamina,
             unit.heat,
+            unit.wound_head,
+            unit.wound_torso,
+            unit.wound_arm,
+            unit.wound_leg,
         )
         assert all(math.isfinite(value) for value in values), (unit.uid, values)
         assert -0.5 <= unit.x < kz.MAP_W + 0.5
@@ -39,6 +44,10 @@ def assert_invariants(game):
         assert 0 <= unit.suppression <= 100
         assert 0 <= unit.cohesion <= 100
         assert 0 <= unit.stamina <= 100
+        assert all(
+            0 <= wound <= 100
+            for wound in (unit.wound_head, unit.wound_torso, unit.wound_arm, unit.wound_leg)
+        )
         for x, y in unit.path + unit.waypoints:
             assert game.in_bounds(x, y), (unit.uid, x, y)
         if not unit.combat_effective:
