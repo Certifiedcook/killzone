@@ -122,7 +122,9 @@ This build hardens the vertical slice rather than expanding its content scope. I
 - Expanded shot-chance breakdown explaining cover, range, stance, suppression, smoke, preparation, flank/enfilade, weather, and fire mode.
 - Four procedural battlefield variants: open farmland, wooded ridge, ruined village, and ridgeline.
 - Stronger static terrain detailing for trenches, craters, woods, buildings, and sandbags.
-- Distance-aware combat audio, procedural bullet-snap/impact/thump layers, and restrained distant battlefield ambience.
+- Distance-aware combat audio, procedural bullet-snap/impact/thump layers, restrained distant battlefield ambience, and distinct tactical cues for orders, contact, casualties, warnings, and objectives.
+- Critical status badges identify pinned, breaking, wounded, treating, evacuating, jammed, reloading, and ammunition-starved troops directly on the battlefield.
+- Recent friendly casualties and major tactical events receive short-lived map pings; selected troops outside the camera view receive squad-colored edge arrows.
 - Expanded after-action report with objective completion, force statistics, and a key-event timeline.
 
 The existing optimization architecture is retained: pathfinding/AI work remains budgeted across simulation ticks, threat and occupancy lookups are cached, transient effects are capped, and render FPS remains uncapped by default. Logistics expansion is still intentionally deferred.
@@ -181,9 +183,21 @@ The historical model suite contains **71 tests**. Use `validate.bat` for the com
 ### Squads and selection
 
 - Friendly and hostile troops are organized into persistent four-man fireteams/squads.
+- Initial forces and arriving reserves automatically group assault, fire-support, recon, and support roles into tactically coherent squads; unusual rosters use capacity-aware fallbacks.
 - Click `SQUAD A`, `SQUAD B`, etc. to select a squad.
+- **1..9** quickly selects Squad A–I during deployment or battle.
 - **Alt+1..5** reassigns the current selection to Squad A–E.
-- Existing Ctrl+1..9 control groups remain available.
+- **Ctrl+1..9** saves control groups and **Shift+1..9** recalls them.
+- Squad tabs, unit cards, and friendly map markers now share stable color accents and numbered hotkey badges; tabs also identify each squad's dominant tactical role.
+- The main-menu Help page and in-battle **F1** guide explain every command-bar button, targeted versus instant commands, and changing setting labels.
+- Hover command buttons for concise instructions; unavailable actions are dimmed with a reason, active target modes show a map reticle, and **Escape** cancels a pending mode before opening the menu.
+- Press a squad number twice quickly to select and center its troops. Use **Shift+W**, **Shift+P**, and **Shift+I** to select all wounded, pinned/breaking, or idle troops.
+- Hover unit cards for full health, loaded/reserve ammunition, suppression, morale, and condition details.
+- Planned movement and queued move/fire orders use stronger colored paths and numbered destination markers.
+- Tactical audio acknowledges orders and distinguishes first contact, friendly casualties, counterattacks, reserves, and objective progress without revealing hidden enemy positions.
+- Critical-state badges, recent-event pings, and squad-colored off-screen arrows make battlefield emergencies easier to locate.
+- Mobile infantry can engage visible targets while advancing; moving fire uses normal ammunition and weapon timing but suffers a large accuracy penalty shown in the shot breakdown.
+- Settings now include 90/100/110% UI scale and a larger-text toggle, and automatically persist display, audio, performance, speed, help, and accessibility preferences.
 - A bottom unit-card strip gives health/suppression status and direct selection for up to 16 deployed troops.
 - Visible drag-box selection remains supported with the camera and zoom system.
 
@@ -316,7 +330,11 @@ Space still pauses the simulation, but movement and queued orders can be issued 
 - **Tab:** threat overlay
 - **Alt+1..5:** assign Squad A–E
 - **Ctrl+1..9:** assign control group
-- **1..9:** recall control group
+- **Shift+1..9:** recall control group
+- **1..9:** select Squad A–I; double-tap to focus
+- **Shift+W:** select all wounded troops
+- **Shift+P:** select all pinned/breaking troops
+- **Shift+I:** select all idle troops
 - **Arrow keys / screen edge:** pan camera
 - **MMB drag:** pan camera
 - **Mouse wheel:** zoom
