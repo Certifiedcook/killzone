@@ -21,6 +21,7 @@ def main():
     assert app.screen.get_size() == (kz.WINDOW_W, kz.WINDOW_H)
     if pygame.mixer.get_init():
         assert set(kz.TACTICAL_AUDIO_VOLUMES).issubset(app._tactical_audio)
+        assert set(kz.PRESENTATION_AUDIO_DURATIONS).issubset(app._presentation_audio)
         assert app.play_tactical_sound("command")
     output_dir = Path("test_output")
     output_dir.mkdir(exist_ok=True)
@@ -28,6 +29,88 @@ def main():
     for state in ("menu", "setup", "settings", "help"):
         app.state = state
         app.draw()
+
+    app.state = "multiplayer"
+    app.network_status = "ONLINE · SERVER 0.1.0"
+    app.network_online = 2
+    app.network_rooms = [
+        {
+            "id": "KZ9403",
+            "name": "Friends Battle",
+            "players": 1,
+            "capacity": 2,
+            "locked": False,
+            "status": "lobby",
+            "battlefield": "farmland",
+        }
+    ]
+    app.draw()
+    multiplayer_browser = output_dir / "multiplayer_browser.png"
+    pygame.image.save(app.screen, multiplayer_browser)
+    assert multiplayer_browser.stat().st_size > 1_000
+
+    app.state = "multiplayer_lobby"
+    app.network_connection_id = "blue"
+    app.network_lobby = {
+        "id": "KZ9403",
+        "name": "Friends Battle",
+        "status": "lobby",
+        "seed": 9403,
+        "battlefield": "farmland",
+        "players": [
+            {"id": "blue", "name": "Commander Blue", "slot": 0, "ready": True},
+            {"id": "red", "name": "Commander Red", "slot": 1, "ready": False},
+        ],
+    }
+    app.draw()
+    multiplayer_lobby = output_dir / "multiplayer_lobby.png"
+    pygame.image.save(app.screen, multiplayer_lobby)
+    assert multiplayer_lobby.stat().st_size > 1_000
+
+    authoritative = kz.create_network_pvp_game(seed=9403, battlefield="farmland")
+    replica = kz.create_network_pvp_game(seed=9403, battlefield="farmland")
+    kz._network_normalize_client_factions(replica, "enemy")
+    kz.apply_network_snapshot(replica, kz.serialize_network_snapshot(authoritative, "enemy"))
+    app.game = replica
+    app.state = "game"
+    app.battle_active = True
+    app.network_side = "enemy"
+    app.network_match_active = True
+    app.selected = [unit.uid for unit in replica.living("player")[:4]]
+    app.show_help = False
+    app.draw()
+    multiplayer_match = output_dir / "multiplayer_match_red.png"
+    pygame.image.save(app.screen, multiplayer_match)
+    assert multiplayer_match.stat().st_size > 1_000
+    app.network_match_active = False
+    app.network_side = None
+
+    app.state = "operation_setup"
+    app.draw()
+    operations_setup = output_dir / "operations_setup.png"
+    pygame.image.save(app.screen, operations_setup)
+    assert operations_setup.stat().st_size > 1_000
+
+    app.setup_mission = "defense"
+    app.setup_variant = "ruined_village"
+    app.setup_weather = "fog"
+    app.setup_enemy_strength = 1.25
+    app.setup_defense_duration = 180
+    app.start_battle()
+    assert app.game.mission_type == "defense"
+    assert app.game.deployment_zone_side == "east"
+    app.draw()
+    defense_briefing = output_dir / "defense_briefing.png"
+    pygame.image.save(app.screen, defense_briefing)
+    assert defense_briefing.stat().st_size > 1_000
+
+    # Return to the default Assault operation for the established rendering
+    # and tactical-control smoke path below.
+    app.setup_mission = "assault"
+    app.setup_variant = "auto"
+    app.setup_weather = "auto"
+    app.setup_enemy_strength = 1.0
+    app.setup_defense_duration = 300
 
     app.ui_scale = 1.1
     app.large_text = True
@@ -52,6 +135,84 @@ def main():
     app.selected = [unit.uid for unit in app.game.living("player")[:4]]
     app.draw()
     app.finalize_deployment()
+
+    engineer = next(unit for unit in app.game.living("player") if unit.role == "Engineer")
+
+    # Exercise the complete RTS construction input path without preselecting
+    # an engineer: hotkey, project choice, map placement, and assignment.
+    app.selected = []
+    app.handle_event(
+        pygame.event.Event(
+            pygame.KEYDOWN,
+            {"key": pygame.K_b, "mod": pygame.KMOD_SHIFT, "unicode": "B"},
+        )
+    )
+    assert app.build_menu_open
+    app.handle_event(
+        pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            {"button": 1, "pos": app.build_menu_rects()["sandbags"].center},
+        )
+    )
+    assert app.command_mode == "build:sandbags"
+    build_site = next(
+        (x, y)
+        for y in range(1, kz.MAP_H - 1)
+        for x in range(1, kz.MAP_W - 1)
+        if app.map_view_rect().collidepoint(app.cell_rect(x, y).center)
+        and app.game.validate_build_site("player", "sandbags", (x, y))[0]
+        and app.game.builder_staging_position(engineer, (x, y)) is not None
+    )
+    app.handle_event(
+        pygame.event.Event(
+            pygame.MOUSEBUTTONDOWN,
+            {"button": 1, "pos": app.cell_rect(*build_site).center},
+        )
+    )
+    assert app.command_mode == "normal"
+    assert build_site in app.game.construction_reservations
+    assert getattr(engineer, "_construction_queued", False)
+
+    app.selected = [engineer.uid]
+    app.show_help = False
+    app.build_menu_open = True
+    app.draw()
+    construction_menu = output_dir / "construction_menu.png"
+    pygame.image.save(app.screen, construction_menu)
+    assert construction_menu.stat().st_size > 1_000
+    app.build_menu_open = False
+
+    visual_sites = []
+    for y in range(2, kz.MAP_H - 2):
+        for x in range(2, kz.MAP_W - 2):
+            if len(visual_sites) == len(kz.STATIC_WEAPON_ROLES):
+                break
+            if not app.map_view_rect().collidepoint(app.cell_rect(x, y).center):
+                continue
+            if app.game.unit_at(x, y) is not None:
+                continue
+            if app.game.grid[y][x].terrain not in ("open", "mud", "rubble", "crater", "foxhole", "hill"):
+                continue
+            if any(abs(x - sx) + abs(y - sy) < 5 for sx, sy in visual_sites):
+                continue
+            visual_sites.append((x, y))
+        if len(visual_sites) == len(kz.STATIC_WEAPON_ROLES):
+            break
+    assert len(visual_sites) == len(kz.STATIC_WEAPON_ROLES)
+    for role, site in zip(sorted(kz.STATIC_WEAPON_ROLES), visual_sites, strict=True):
+        emplacement = app.game.add_unit("player", role, *site)
+        emplacement.is_emplacement = True
+        emplacement.squad_id = 0
+        emplacement.deployed = True
+        emplacement.hold_position = True
+        emplacement.facing = 330
+    app.draw()
+    emplacement_designs = output_dir / "emplacement_designs.png"
+    pygame.image.save(app.screen, emplacement_designs)
+    assert emplacement_designs.stat().st_size > 1_000
+
+    assert app.cycle_selected_doctrine() == "aggressive"
+    app.selected = [unit.uid for unit in app.game.living("player")[:4]]
 
     # Exercise the in-battle command guide separately, then leave the final
     # screenshot focused on the battlefield/UI visual smoke target.
@@ -176,6 +337,21 @@ def main():
     for unit, snapshot in zip(readable_units, snapshots, strict=True):
         for field, value in snapshot.items():
             setattr(unit, field, value)
+
+    focus = app.selected_units()[0]
+    app.game.weather = "rain"
+    app.game.tracers.append(kz.Tracer(focus.pos, (focus.x + 7, focus.y + 2), 0.18, 0.20))
+    app.game.impacts.append(kz.Impact(focus.x + 5, focus.y + 1, "dirt", 0.18))
+    app.game.explosions.append(
+        kz.Explosion(focus.x + 8, focus.y + 3, 0.35, 2.4, 75, 90, "HE", "enemy")
+    )
+    app.play_event({"type": "shot", "weapon": "Rifle", "pos": focus.pos, "faction": "player"})
+    app.play_event({"type": "explosion", "pos": (focus.x + 8, focus.y + 3), "radius": 2.4})
+    app.draw()
+    presentation = output_dir / "presentation_overhaul.png"
+    pygame.image.save(app.screen, presentation)
+    assert presentation.stat().st_size > 1_000
+    assert app._presentation_events
 
     app.mouse = (0, 0)
     app.draw()

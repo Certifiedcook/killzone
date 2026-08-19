@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 import subprocess
 import sys
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
@@ -33,6 +32,10 @@ def main():
 
     run("self_test.py")
     run("regression_test.py")
+    run("multiplayer_test.py")
+    run("presentation_test.py")
+    run("combat2_test.py")
+    run("combat_polish_test.py")
     run("ui_smoke_test.py")
     try:
         __import__("pygame")

@@ -523,6 +523,208 @@ def test_moving_troops_fire_with_an_accuracy_penalty():
     assert mover.ammo == ammunition_before
 
 
+def test_advanced_operation_options_are_applied_deterministically():
+    config = {
+        "mission": "assault",
+        "variant": "ruined_village",
+        "weather": "fog",
+        "enemy_strength": 1.25,
+        "defense_duration": 180,
+    }
+    first = kz.RealTimeGame(seed=1021, difficulty="Easy", operation_config=config)
+    second = kz.RealTimeGame(seed=1021, difficulty="Easy", operation_config=config)
+
+    assert first.battle_variant == second.battle_variant == "ruined_village"
+    assert first.weather == second.weather == "fog"
+    assert first.operation_enemy_strength == 1.25
+    assert len(first.living("enemy")) == len(second.living("enemy")) == 10
+    assert first.seed == second.seed == 1021
+
+
+def test_defense_mode_reverses_deployment_and_commits_three_waves():
+    game = kz.RealTimeGame(
+        seed=1022,
+        difficulty="Easy",
+        operation_config={"mission": "defense", "defense_duration": 180},
+    )
+    players = [unit for unit in game.living("player") if unit.combat_effective]
+    enemies = [unit for unit in game.living("enemy") if unit.combat_effective]
+
+    assert game.deployment_zone_side == "east"
+    assert min(unit.x for unit in players) >= game.defense_deployment_x
+    assert max(unit.x for unit in enemies) < game.primary_line_x
+    assert {getattr(unit, "attack_wave", 0) for unit in enemies} == {1, 2, 3}
+    assert all(unit.reserve_active for unit in enemies if unit.attack_wave == 1)
+    assert not any(unit.reserve_active for unit in enemies if unit.attack_wave in (2, 3))
+
+    game.update_defense_mission(55)
+    assert 2 in game.defense_wave_announced
+    game.update_defense_mission(60)
+    assert 3 in game.defense_wave_announced
+    assert game.objective_index == 1
+
+
+def test_defense_attackers_advance_toward_open_assault_waypoints():
+    game = kz.RealTimeGame(
+        seed=1026,
+        difficulty="Hard",
+        operation_config={"mission": "defense", "defense_duration": 180},
+    )
+    attackers = [
+        unit
+        for unit in game.living("enemy")
+        if unit.combat_effective and unit.reserve_active
+    ]
+    initial_average_x = sum(unit.x for unit in attackers) / len(attackers)
+    step(game, 8)
+    surviving_attackers = [unit for unit in attackers if unit.combat_effective]
+    advanced_average_x = sum(unit.x for unit in surviving_attackers) / len(surviving_attackers)
+    assert advanced_average_x > initial_average_x + 5
+    assert any(unit.order in ("move", "fire", "suppress") for unit in surviving_attackers)
+
+
+def test_defense_planner_assigns_roles_and_reacts_to_observed_resistance():
+    game = kz.RealTimeGame(
+        seed=1028,
+        difficulty="Hard",
+        operation_config={"mission": "defense", "defense_duration": 180},
+    )
+    active = [unit for unit in game.living("enemy") if unit.reserve_active]
+    assert len(game.defense_attack_plan) == len(active)
+    assert all(
+        unit.attack_assignment == "breach"
+        for unit in active
+        if unit.role in ("Assault", "Grenadier")
+    )
+    assert all(
+        unit.attack_assignment == "fire_support"
+        for unit in active
+        if unit.role in ("Machine Gunner", "Marksman", "Sniper", "HMG Crew")
+    )
+    assault_units = [unit for unit in active if unit.attack_assignment == "assault"]
+    assert any(unit.attack_sector != game.defense_main_effort for unit in assault_units)
+
+    previous_effort = game.defense_main_effort
+    contact_y = kz.MAP_H // 6 if previous_effort == "NORTH" else kz.MAP_H // 2 if previous_effort == "CENTRE" else kz.MAP_H * 5 // 6
+    for index in range(6):
+        game.intel["enemy"][10_000 + index] = {
+            "pos": (game.primary_line_x, contact_y),
+            "seen": game.time,
+            "role": "MG Emplacement",
+        }
+    game.plan_defense_attack(force=True)
+    assert game.defense_main_effort != previous_effort
+    assert game.defense_sector_pressure[previous_effort] == max(game.defense_sector_pressure.values())
+
+    game.activate_defense_wave(2)
+    sustainment = [
+        unit
+        for unit in game.living("enemy")
+        if unit.reserve_active and unit.role in ("Medic", "Engineer")
+    ]
+    assert sustainment and all(unit.attack_assignment == "sustainment" for unit in sustainment)
+    assert all(not game.enemy_builder_ready(unit) for unit in sustainment if unit.role == "Engineer")
+
+
+def test_defense_reserves_enter_from_the_east_only_once():
+    game = kz.RealTimeGame(
+        seed=1025,
+        difficulty="Easy",
+        player_roster=["Rifleman", "Medic", "Engineer", "Assault"],
+        reserve_count=2,
+        operation_config={"mission": "defense"},
+    )
+    first = game.deploy_player_reserves()
+    second = game.deploy_player_reserves()
+    assert len(first) == 2 and not second
+    assert min(unit.x for unit in first) >= game.defense_deployment_x
+    assert all(unit.facing == 180 for unit in first)
+
+
+def test_squad_doctrine_changes_movement_and_moving_fire_policy():
+    game = fresh(1023)
+    unit = game.add_unit("player", "Rifleman", 2, 2)
+    target = game.add_unit("enemy", "Rifleman", 6, 2)
+    target.spotted_player_until = 99
+
+    assert game.doctrine_for(unit) == "balanced"
+    assert game.cycle_squad_doctrine([unit]) == "aggressive"
+    game.issue_move([unit], (8, 2))
+    assert unit.move_mode == "fast"
+
+    assert game.cycle_squad_doctrine([unit]) == "cautious"
+    unit.order = "move"
+    unit.path = [(3, 2)]
+    unit.waypoints = [(8, 2)]
+    unit.fire_discipline = "free"
+    unit.next_shot = game.time
+    assert not game.can_attempt_moving_fire(unit)
+    unit.under_fire_until = game.time + 2
+    assert game.can_attempt_moving_fire(unit)
+
+
+def test_engineers_construct_defenses_and_static_weapons_for_both_sides():
+    game = fresh(1024)
+    player_engineer = game.add_unit("player", "Engineer", 4, 4)
+    enemy_engineer = game.add_unit("enemy", "Engineer", 12, 4)
+
+    started, reason = game.begin_construction(player_engineer, "sandbags", (5, 4))
+    assert started, reason
+    player_engineer.action_timer = 0
+    game.complete_action(player_engineer)
+    assert game.grid[4][5].terrain == "sandbags"
+
+    started, reason = game.begin_construction(player_engineer, "mg_nest", (4, 5))
+    assert started, reason
+    player_engineer.action_timer = 0
+    game.complete_action(player_engineer)
+
+    started, reason = game.begin_construction(enemy_engineer, "artillery", (12, 5))
+    assert started, reason
+    enemy_engineer.action_timer = 0
+    game.complete_action(enemy_engineer)
+
+    player_emplacement = next(unit for unit in game.living("player") if unit.role == "MG Emplacement")
+    enemy_artillery = next(unit for unit in game.living("enemy") if unit.role == "Artillery Battery")
+    assert player_emplacement.is_emplacement and player_emplacement.deployed
+    assert enemy_artillery.is_emplacement and enemy_artillery.artillery_shells == 12
+    assert game.static_emplacement_count("player") == 1
+    assert game.static_emplacement_count("enemy") == 1
+
+    app = object.__new__(kz.KillZoneApp)
+    app.game = game
+    assert 0 not in app.squad_rects()
+
+
+def test_engineer_emplacements_have_unique_non_infantry_visuals():
+    assert set(kz.EMPLACEMENT_VISUALS) == set(kz.STATIC_WEAPON_ROLES)
+    silhouettes = {
+        definition["silhouette"]
+        for definition in kz.EMPLACEMENT_VISUALS.values()
+    }
+    labels = {definition["label"] for definition in kz.EMPLACEMENT_VISUALS.values()}
+    assert len(silhouettes) == len(kz.STATIC_WEAPON_ROLES)
+    assert len(labels) == len(kz.STATIC_WEAPON_ROLES)
+    assert not silhouettes & {"infantry", "rifleman"}
+
+
+def test_rts_construction_moves_an_available_engineer_to_the_blueprint():
+    game = fresh(1027)
+    engineer = game.add_unit("player", "Engineer", 2, 2)
+    game.add_unit("player", "Rifleman", 3, 2)
+    site = (14, 10)
+
+    assigned, reason = game.queue_construction("player", "sandbags", site)
+    assert assigned is engineer, reason
+    assert site in game.construction_reservations
+    assert engineer.order == "move" and engineer.waypoints
+
+    step(game, 18)
+    assert game.grid[site[1]][site[0]].terrain == "sandbags"
+    assert site not in game.construction_reservations
+    assert engineer.order == "idle"
+
+
 def test_multiseed_simulation_invariants():
     for difficulty, seed in zip(kz.DIFFICULTY, (1011, 1012, 1013), strict=True):
         game = kz.RealTimeGame(seed=seed, difficulty=difficulty, reserve_count=2)

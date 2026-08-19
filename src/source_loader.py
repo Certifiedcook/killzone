@@ -1,15 +1,14 @@
 """Reconstruct the runnable Kill Zone sources from the checked-in payloads.
 
-The historical game and test payloads are compressed to keep the repository
-compact.  New maintenance code stays as normal, reviewable Python and is
-appended before the application entry point.
+Each historical game or test payload is one deterministic gzip archive.
+Current feature code stays as normal, reviewable Python and is appended before
+the application entry point.
 """
 
 from __future__ import annotations
 
 import gzip
 from pathlib import Path
-
 
 ENTRY_POINT = '\n\nif __name__=="__main__":\n    main()\n'
 
@@ -25,17 +24,17 @@ def _read_gzip(path: Path) -> str:
 
 def game_source(root: Path) -> str:
     """Return the complete runnable game source for *root*."""
-    parts = sorted((root / "src" / "kill_zone_parts_v5").glob("part_*.pyfrag.gz"))
-    if not parts:
-        raise RuntimeError("Kill Zone source fragments are missing")
-
-    base = "".join(_read_gzip(part) for part in parts)
+    base = _read_gzip(root / "src" / "legacy_game.py.gz")
     if not base.endswith(ENTRY_POINT):
-        raise RuntimeError("Unexpected Kill Zone v5 source layout")
+        raise RuntimeError("Unexpected legacy Kill Zone source layout")
 
     extensions = [
-        _read_gzip(root / "src" / "perf_extension_v6.py.gz"),
+        _read_gzip(root / "src" / "legacy_performance.py.gz"),
         (root / "src" / "maintenance_extension.py").read_text(encoding="utf-8"),
+        (root / "src" / "multiplayer_extension.py").read_text(encoding="utf-8"),
+        (root / "src" / "presentation_extension.py").read_text(encoding="utf-8"),
+        (root / "src" / "combat2_extension.py").read_text(encoding="utf-8"),
+        (root / "src" / "combat_polish_extension.py").read_text(encoding="utf-8"),
     ]
     return base[: -len(ENTRY_POINT)] + "\n" + "\n".join(extensions) + ENTRY_POINT
 

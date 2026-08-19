@@ -1,8 +1,0 @@
-WEAPONS: Dict[str, dict] = {
-    "Service Rifle": {"range": 11.0, "damage": 32, "acc": 62, "supp": 16, "rpm": 190, "mag": 20, "reload": 2.5, "heat": 2, "cool": 18, "pen": 2},
-    "SMG": {"range": 6.5, "damage": 23, "acc": 56, "supp": 18, "rpm": 520, "mag": 30, "reload": 2.2, "heat": 2, "cool": 19, "pen": 1},
-    "Automatic Rifle": {"range": 9.0, "damage": 27, "acc": 55, "supp": 27, "rpm": 430, "mag": 20, "reload": 2.6, "heat": 4, "cool": 17, "pen": 2},
-    "Light Machine Gun": {"range": 12.0, "damage": 28, "acc": 53, "supp": 46, "rpm": 600, "mag": 50, "reload": 4.6, "heat": 7, "cool": 12, "pen": 2},
-    "Heavy Machine Gun": {"range": 15.0, "damage": 38, "acc": 58, "supp": 65, "rpm": 520, "mag": 100,"reload": 6.0, "heat": 9, "cool": 10, "pen": 4},
-    "Scoped Rifle": {"range": 17.0, "damage": 84, "acc": 79, "supp": 34, "rpm": 45, "mag": 5, "reload": 3.0, "heat": 1, "cool": 25, "pen": 3},
-    "Marksman Rifle": {"range": 14.0, "damage": 48, "acc": 72, "supp": 23, "rpm": 120, "mag": 10, "reload": 2.8, "heat": 2, "cool": 22, "pen": 3},
