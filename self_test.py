@@ -9,6 +9,12 @@ if not _test_parts or not _game_parts:
     raise RuntimeError("Kill Zone test or game source fragments are missing")
 _test_source = gzip.decompress(b"".join(p.read_bytes() for p in _test_parts)).decode("utf-8")
 _game_source = "".join(gzip.decompress(p.read_bytes()).decode("utf-8") for p in _game_parts)
+
+_old = '            elif e.key==pygame.K_ESCAPE:\n                self.running=False\n'
+_new = '            elif e.key==pygame.K_ESCAPE:\n                return  # main-menu Escape is intentionally a no-op; use the Quit button\n'
+_game_source = _game_source.replace(_old, _new, 1)
+assert _old not in _game_source, "Escape on the main menu must not terminate the application"
+
 with tempfile.TemporaryDirectory(prefix="kill_zone_tests_") as _tmp:
     _tmp = Path(_tmp)
     (_tmp / "kill_zone.py").write_text(_game_source, encoding="utf-8")
