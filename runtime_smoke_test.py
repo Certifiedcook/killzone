@@ -9,6 +9,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 os.environ.setdefault("KILLZONE_DISABLE_ASSET_DOWNLOADS", "1")
+os.environ.setdefault("KILLZONE_DISABLE_SETTINGS_PERSISTENCE", "1")
 
 import pygame
 
@@ -18,10 +19,24 @@ import kill_zone as kz
 def main():
     app = kz.KillZoneApp()
     assert app.screen.get_size() == (kz.WINDOW_W, kz.WINDOW_H)
+    output_dir = Path("test_output")
+    output_dir.mkdir(exist_ok=True)
 
     for state in ("menu", "setup", "settings", "help"):
         app.state = state
         app.draw()
+
+    app.ui_scale = 1.1
+    app.large_text = True
+    app._text_surface_cache.clear()
+    app.state = "settings"
+    app.draw()
+    accessibility = output_dir / "accessibility_settings.png"
+    pygame.image.save(app.screen, accessibility)
+    assert accessibility.stat().st_size > 1_000
+    app.ui_scale = 1.0
+    app.large_text = False
+    app._text_surface_cache.clear()
 
     app.seed_text = "424242"
     app.setup_difficulty = "Veteran"
@@ -35,6 +50,14 @@ def main():
     app.draw()
     app.finalize_deployment()
 
+    # Exercise the in-battle command guide separately, then leave the final
+    # screenshot focused on the battlefield/UI visual smoke target.
+    app.show_help = True
+    app.draw()
+    command_help = output_dir / "command_help.png"
+    pygame.image.save(app.screen, command_help)
+    assert command_help.stat().st_size > 1_000
+    app.show_help = False
     app.show_threat = True
     app.show_fps = True
     app.show_perf = True
@@ -53,8 +76,45 @@ def main():
         assert app.display_mode in (mode, "windowed")
         app.draw()
 
-    output_dir = Path("test_output")
-    output_dir.mkdir(exist_ok=True)
+    app.focus_selected()
+    app.draw()
+
+    app.mouse = app.unit_card_rects()[0][1].center
+    app.draw()
+    unit_tooltip = output_dir / "unit_card_tooltip.png"
+    pygame.image.save(app.screen, unit_tooltip)
+    assert unit_tooltip.stat().st_size > 1_000
+
+    app.mouse = app.command_bar_rects()["ASSAULT"].center
+    app.draw()
+    tooltip = output_dir / "command_tooltip.png"
+    pygame.image.save(app.screen, tooltip)
+    assert tooltip.stat().st_size > 1_000
+
+    app.command_mode = "smoke"
+    app.mouse = app.cell_rect(8, 8).center
+    app.draw()
+    targeting = output_dir / "targeting_cursor.png"
+    pygame.image.save(app.screen, targeting)
+    assert targeting.stat().st_size > 1_000
+    app.command_mode = "normal"
+
+    planned_unit = app.selected_units()[0]
+    app.game.issue_move([planned_unit], (8, 8), formation="column")
+    app.game.issue_move([planned_unit], (11, 10), append=True, formation="column")
+    app.mouse = (0, 0)
+    app.draw()
+    waypoints = output_dir / "queued_waypoints.png"
+    pygame.image.save(app.screen, waypoints)
+    assert waypoints.stat().st_size > 1_000
+    planned_unit.path = []
+    planned_unit.waypoints = []
+    planned_unit.command_queue = []
+    planned_unit.order = "idle"
+
+    app.mouse = (0, 0)
+    app.draw()
+
     screenshot = output_dir / "runtime_smoke.png"
     pygame.image.save(app.screen, screenshot)
     assert screenshot.stat().st_size > 1_000

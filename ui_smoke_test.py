@@ -4,6 +4,8 @@ import os
 
 from src.source_loader import game_source, test_source
 
+os.environ.setdefault("KILLZONE_DISABLE_SETTINGS_PERSISTENCE", "1")
+
 _root=Path(__file__).resolve().parent
 _game = game_source(_root)
 _test = test_source(_root, "ui_smoke_v6.py.gz")

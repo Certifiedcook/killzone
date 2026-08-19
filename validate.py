@@ -18,6 +18,7 @@ def run(name, *arguments):
     print(f"\n==> {name}", flush=True)
     environment = os.environ | {
         "KILLZONE_DISABLE_ASSET_DOWNLOADS": "1",
+        "KILLZONE_DISABLE_SETTINGS_PERSISTENCE": "1",
         "PYGAME_HIDE_SUPPORT_PROMPT": "1",
     }
     subprocess.run(command, cwd=ROOT, check=True, env=environment)

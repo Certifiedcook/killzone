@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import math
+import os
+from pathlib import Path
+import tempfile
+from types import SimpleNamespace
+
+os.environ.setdefault("KILLZONE_DISABLE_SETTINGS_PERSISTENCE", "1")
 
 import kill_zone as kz
 
@@ -132,6 +138,283 @@ def test_player_reserves_deploy_only_once():
     assert len(first) == 2 and after_first == before + 2
     assert second == [] and len(game.units) == after_first
     assert game.stats["player"]["reserves"] == 2
+
+
+def test_mixed_roles_auto_allocate_into_tactical_squads():
+    roster = [
+        "Medic",
+        "Rifleman",
+        "Recon",
+        "Machine Gunner",
+        "Engineer",
+        "Assault",
+        "Sniper",
+        "Mortar Team",
+        "Grenadier",
+        "Automatic Rifleman",
+        "Marksman",
+        "HMG Crew",
+    ]
+    game = kz.RealTimeGame(seed=1007, difficulty="Easy", player_roster=roster)
+    squads = {}
+    for unit in game.living("player"):
+        squads.setdefault(unit.squad_id, set()).add(kz.squad_role_group(unit.role))
+
+    assert len(squads) == 4
+    assert all(len(groups) == 1 for groups in squads.values())
+    assert {next(iter(groups)) for groups in squads.values()} == set(kz.SQUAD_ROLE_GROUPS)
+
+
+def test_auto_squad_overflow_stays_visible_and_within_capacity():
+    roster = (
+        ["Rifleman"] * 5
+        + ["Medic"] * 5
+        + ["Recon"] * 5
+        + ["Machine Gunner"]
+    )
+    game = kz.RealTimeGame(seed=1008, difficulty="Easy", player_roster=roster)
+    counts = {}
+    for unit in game.living("player"):
+        counts[unit.squad_id] = counts.get(unit.squad_id, 0) + 1
+
+    assert max(counts) <= kz.AUTO_SQUAD_LIMIT
+    assert len(counts) <= kz.AUTO_SQUAD_LIMIT
+    assert max(counts.values()) <= kz.AUTO_SQUAD_SIZE
+
+
+def test_reserves_reinforce_matching_tactical_squads():
+    game = kz.RealTimeGame(
+        seed=1009,
+        difficulty="Easy",
+        player_roster=["Rifleman", "Medic", "Machine Gunner", "Assault", "Recon"],
+        reserve_count=2,
+    )
+    rifleman = next(unit for unit in game.living("player") if unit.role == "Rifleman")
+    occupied_before = {unit.squad_id for unit in game.living("player")}
+
+    reserves = game.deploy_player_reserves()
+    assault = next(unit for unit in reserves if unit.role == "Assault")
+    recon = next(unit for unit in reserves if unit.role == "Recon")
+
+    assert assault.squad_id == rifleman.squad_id
+    assert recon.squad_id not in occupied_before
+
+
+def test_number_keys_select_squads_without_stealing_modified_bindings():
+    game = kz.RealTimeGame(
+        seed=1010,
+        difficulty="Easy",
+        player_roster=["Rifleman", "Medic", "Recon", "Machine Gunner"],
+    )
+    app = object.__new__(kz.KillZoneApp)
+    app.game = game
+    app.selected = []
+    app.control_groups = {number: [] for number in range(1, 10)}
+    app.message = ""
+    app.show_perf = False
+
+    app.handle_key(kz.pygame.K_2, 0)
+    squad_two = [unit.uid for unit in game.living("player") if unit.squad_id == 2]
+    assert squad_two and app.selected == squad_two
+
+    app.handle_key(kz.pygame.K_7, kz.pygame.KMOD_CTRL)
+    app.selected = []
+    app.handle_key(kz.pygame.K_7, kz.pygame.KMOD_SHIFT)
+    assert app.selected == squad_two
+
+    reassigned = game.get_unit(squad_two[0])
+    app.selected = [reassigned.uid]
+    app.handle_key(kz.pygame.K_5, kz.pygame.KMOD_ALT)
+    assert reassigned.squad_id == 5
+    app.selected = []
+    app.handle_key(kz.pygame.K_5, 0)
+    assert app.selected == [reassigned.uid]
+
+
+def test_number_keys_select_squads_during_deployment():
+    game = kz.RealTimeGame(
+        seed=1011,
+        difficulty="Easy",
+        player_roster=["Rifleman", "Medic", "Recon", "Machine Gunner"],
+    )
+    app = object.__new__(kz.KillZoneApp)
+    app.game = game
+    app.selected = []
+    event = SimpleNamespace(type=kz.pygame.KEYDOWN, key=kz.pygame.K_3, mod=0)
+
+    app.handle_deployment_event(event)
+
+    squad_three = [unit.uid for unit in game.living("player") if unit.squad_id == 3]
+    assert squad_three and app.selected == squad_three
+
+
+def test_squad_visual_palette_is_stable_and_distinct():
+    colors = [kz.squad_visual_color(number) for number in range(1, 10)]
+    assert len(set(colors)) == 9
+    assert all(len(color) == 3 and all(0 <= channel <= 255 for channel in color) for color in colors)
+    assert kz.squad_visual_color(1) == colors[0]
+    assert kz.squad_visual_color(10) == colors[0]
+
+
+def test_squad_visual_labels_match_tactical_allocation():
+    game = kz.RealTimeGame(seed=1012, difficulty="Easy")
+    labels = {
+        kz.squad_tactical_label(game, squad_id)
+        for squad_id in {unit.squad_id for unit in game.living("player")}
+    }
+    assert labels == {"ASSAULT", "FIRE SUP", "RECON", "SUPPORT"}
+
+
+def test_command_bar_help_documents_every_button():
+    documented = {
+        button
+        for column in kz.COMMAND_BAR_HELP_COLUMNS
+        for button, gesture, description in column
+        if gesture and description
+    }
+    assert documented == {
+        "ASSAULT",
+        "SUPPRESS",
+        "OVERWATCH",
+        "GRENADE",
+        "SMOKE",
+        "RELOAD",
+        "STANCE",
+        "FORMATION",
+        "DISCIPLINE",
+        "PRIORITY",
+        "BOUND",
+        "AUTO",
+        "HOLD",
+        "FALLBACK",
+    }
+
+
+def test_overwatch_button_uses_a_map_facing_point():
+    game = fresh(1013)
+    unit = game.add_unit("player", "Rifleman", 2, 2)
+    app = object.__new__(kz.KillZoneApp)
+    app.game = game
+    app.selected = [unit.uid]
+    app.command_mode = "normal"
+    app.message = ""
+
+    overwatch = app.command_bar_rects()["OVERWATCH"]
+    assert app.handle_command_bar(overwatch.center)
+    assert app.command_mode == "overwatch" and not unit.overwatch
+
+    app.issue_context_command((2, 7))
+    assert app.command_mode == "normal" and unit.overwatch
+    assert 89 <= unit.fire_lane_center <= 91
+
+
+def test_command_buttons_report_capability_and_reason():
+    game = fresh(1014)
+    rifleman = game.add_unit("player", "Rifleman", 2, 2)
+    app = object.__new__(kz.KillZoneApp)
+    app.game = game
+    app.selected = [rifleman.uid]
+
+    enabled, reason = kz.command_button_status(app, "SUPPRESS")
+    assert not enabled and "automatic" in reason
+    rifleman.grenades = 0
+    enabled, reason = kz.command_button_status(app, "GRENADE")
+    assert not enabled and "grenades" in reason
+    rifleman.ammo = rifleman.weapon["mag"]
+    enabled, reason = kz.command_button_status(app, "RELOAD")
+    assert not enabled and "full" in reason
+    rifleman.ammo -= 1
+    assert kz.command_button_status(app, "RELOAD") == (True, "")
+
+
+def test_unit_card_tooltip_explains_health_ammo_and_suppression():
+    game = fresh(1015)
+    unit = game.add_unit("player", "Medic", 2, 2)
+    unit.hp = 54
+    unit.casualty = "wounded"
+    unit.suppression = 63
+    lines = kz.unit_card_tooltip_lines(unit)
+    combined = " ".join(lines)
+    assert "HEALTH 54" in combined
+    assert "AMMO" in combined and "magazines" in combined
+    assert "SUPPRESSION 63" in combined and "WOUNDED" in combined
+
+
+def test_status_selection_finds_wounded_pinned_and_idle_troops():
+    game = fresh(1016)
+    wounded = game.add_unit("player", "Rifleman", 2, 2)
+    wounded.casualty = "wounded"
+    wounded.hp = 60
+    wounded.order = "fire"
+    pinned = game.add_unit("player", "Rifleman", 3, 2)
+    pinned.suppression = 90
+    pinned.morale_state = "PINNED"
+    pinned.order = "move"
+    idle = game.add_unit("player", "Rifleman", 4, 2)
+    idle.order = "idle"
+    app = object.__new__(kz.KillZoneApp)
+    app.game = game
+    app.selected = []
+    app.message = ""
+
+    assert app.select_units_by_status("wounded") and app.selected == [wounded.uid]
+    assert app.select_units_by_status("pinned") and app.selected == [pinned.uid]
+    assert app.select_units_by_status("idle") and app.selected == [idle.uid]
+
+
+def test_double_tapping_squad_number_focuses_selection():
+    game = fresh(1017)
+    unit = game.add_unit("player", "Rifleman", 2, 2)
+    app = object.__new__(kz.KillZoneApp)
+    app.game = game
+    app.selected = []
+    app.message = ""
+    app._qol_last_squad_key = None
+    app._qol_last_squad_at = -99.0
+    app.focused = False
+    app.focus_selected = lambda: setattr(app, "focused", True)
+
+    assert app.select_squad_number(unit.squad_id)
+    assert not app.focused
+    assert app.select_squad_number(unit.squad_id)
+    assert app.focused
+
+
+def test_escape_cancels_target_mode_before_opening_menu():
+    game = fresh(1018)
+    app = object.__new__(kz.KillZoneApp)
+    app.game = game
+    app.selected = []
+    app.show_help = False
+    app.command_mode = "grenade"
+    app.message = ""
+    app.handle_key(kz.pygame.K_ESCAPE, 0)
+    assert app.command_mode == "normal"
+
+
+def test_settings_round_trip_and_font_scaling():
+    source = SimpleNamespace(
+        display_mode="borderless",
+        last_fullscreen_mode="exclusive",
+        menu_speed=2.0,
+        menu_show_help=False,
+        audio_enabled=False,
+        show_fps=True,
+        show_perf=True,
+        fps_cap=120,
+        ui_scale=1.1,
+        large_text=True,
+    )
+    target = SimpleNamespace(**kz.PERSISTED_SETTING_DEFAULTS)
+    with tempfile.TemporaryDirectory(prefix="killzone_settings_") as directory:
+        path = Path(directory) / "settings.json"
+        assert kz.save_user_settings(source, path)
+        assert kz.load_user_settings(target, path)
+
+    assert target.display_mode == "borderless"
+    assert target.menu_speed == 2.0 and target.fps_cap == 120
+    assert target.ui_scale == 1.1 and target.large_text
+    assert kz.effective_ui_font_size(target, 10) == 13
 
 
 def test_multiseed_simulation_invariants():
