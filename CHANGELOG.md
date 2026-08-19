@@ -10,6 +10,7 @@
 - Defensive line stability colors now match their meaning: healthy is green and collapse is red.
 - Invalid programmatic difficulty values now raise a clear `ValueError` listing supported choices.
 - The `OVERWATCH` button now waits for a right-clicked facing point instead of deriving its arc from the bottom-bar button position.
+- Fullscreen mouse input now uses SDL's window-coordinate extent and is normalized exactly once before every UI or map handler.
 
 ### Squads
 
@@ -31,7 +32,7 @@
 
 ### Testing and tooling
 
-- Added 23 focused maintenance regressions.
+- Added 24 focused maintenance regressions.
 - Added real headless Pygame menu, battle, zoom, camera, profiler, and display-mode rendering coverage.
 - Added configurable deterministic stress testing across all difficulties.
 - Added a repeatable 16-unit fixed-step benchmark.

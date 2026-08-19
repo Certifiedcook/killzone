@@ -417,6 +417,36 @@ def test_settings_round_trip_and_font_scaling():
     assert kz.effective_ui_font_size(target, 10) == 13
 
 
+def test_fullscreen_clicks_are_scaled_once_at_the_input_boundary():
+    class DoubleSizeWindow:
+        @staticmethod
+        def get_size():
+            return kz.WINDOW_W * 2, kz.WINDOW_H * 2
+
+    app = object.__new__(kz.KillZoneApp)
+    app.window = DoubleSizeWindow()
+    app.state = "settings"
+    app.mouse = (0, 0)
+    app.menu_show_help = True
+
+    logical_pos = app.settings_rects()["help"].center
+    event = SimpleNamespace(
+        type=kz.pygame.MOUSEBUTTONDOWN,
+        button=1,
+        pos=(logical_pos[0] * 2, logical_pos[1] * 2),
+        dict={},
+    )
+
+    app.normalize_event_pos(event)
+    app.handle_settings_event(event)
+    assert app.settings_rects()["help"].collidepoint(event.pos)
+    assert app.menu_show_help is False
+    assert event.dict[kz._FULLSCREEN_LOGICAL_EVENT_FLAG]
+
+    app.normalize_event_pos(event)
+    assert app.settings_rects()["help"].collidepoint(event.pos)
+
+
 def test_multiseed_simulation_invariants():
     for difficulty, seed in zip(kz.DIFFICULTY, (1011, 1012, 1013), strict=True):
         game = kz.RealTimeGame(seed=seed, difficulty=difficulty, reserve_count=2)

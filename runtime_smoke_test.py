@@ -76,6 +76,28 @@ def main():
         assert app.display_mode in (mode, "windowed")
         app.draw()
 
+    # Send a raw display-space click straight to the outer handler.  This
+    # exercises the path that used to miss fullscreen-scaled UI buttons.
+    app.state = "settings"
+    app.set_display_mode("borderless")
+    display_w, display_h = app.input_display_size()
+    help_center = app.settings_rects()["help"].center
+    display_pos = (
+        round(help_center[0] * display_w / kz.WINDOW_W),
+        round(help_center[1] * display_h / kz.WINDOW_H),
+    )
+    previous_help_setting = app.menu_show_help
+    event = pygame.event.Event(
+        pygame.MOUSEBUTTONDOWN,
+        {"button": 1, "pos": display_pos},
+    )
+    app.handle_event(event)
+    assert app.menu_show_help is not previous_help_setting
+    assert app.settings_rects()["help"].collidepoint(event.pos)
+    app.menu_show_help = previous_help_setting
+    app.set_display_mode("windowed")
+    app.state = "game"
+
     app.focus_selected()
     app.draw()
 

@@ -1483,3 +1483,88 @@ def _qol_accessibility_handle_key(self, key, mods):
 
 
 KillZoneApp.handle_key = _qol_accessibility_handle_key
+
+
+# -----------------------------------------------------------------------------
+# Fullscreen input coordinates
+# -----------------------------------------------------------------------------
+# Mouse events are expressed in window coordinates, while the game always draws
+# to its fixed logical canvas.  Keep the conversion at the outer input boundary
+# and mark converted events so the historical run loop cannot scale them twice.
+
+_FULLSCREEN_LOGICAL_EVENT_FLAG = "_killzone_logical_position"
+
+
+def _fullscreen_input_display_size(self):
+    """Return the coordinate extent used by SDL mouse events."""
+    try:
+        display_surface = pygame.display.get_surface()
+        if display_surface is self.window:
+            width, height = pygame.display.get_window_size()
+            if width > 0 and height > 0:
+                return width, height
+    except (AttributeError, pygame.error):
+        pass
+    try:
+        width, height = self.window.get_size()
+    except (AttributeError, pygame.error):
+        return WINDOW_W, WINDOW_H
+    if width <= 0 or height <= 0:
+        return WINDOW_W, WINDOW_H
+    return width, height
+
+
+KillZoneApp.input_display_size = _fullscreen_input_display_size
+
+
+def _fullscreen_display_to_logical(self, pos):
+    width, height = self.input_display_size()
+    return (
+        int(clamp(pos[0] * WINDOW_W / width, 0, WINDOW_W - 1)),
+        int(clamp(pos[1] * WINDOW_H / height, 0, WINDOW_H - 1)),
+    )
+
+
+KillZoneApp.display_to_logical = _fullscreen_display_to_logical
+
+
+def _fullscreen_normalize_event_pos(self, event):
+    event_data = getattr(event, "dict", None)
+    if isinstance(event_data, dict) and event_data.get(_FULLSCREEN_LOGICAL_EVENT_FLAG):
+        return event
+    if getattr(event, _FULLSCREEN_LOGICAL_EVENT_FLAG, False):
+        return event
+    if not hasattr(event, "pos"):
+        return event
+
+    logical_pos = self.display_to_logical(event.pos)
+    try:
+        event.pos = logical_pos
+    except (AttributeError, TypeError):
+        if isinstance(event_data, dict):
+            event_data["pos"] = logical_pos
+
+    if isinstance(event_data, dict):
+        event_data[_FULLSCREEN_LOGICAL_EVENT_FLAG] = True
+    else:
+        try:
+            setattr(event, _FULLSCREEN_LOGICAL_EVENT_FLAG, True)
+        except (AttributeError, TypeError):
+            pass
+    return event
+
+
+KillZoneApp.normalize_event_pos = _fullscreen_normalize_event_pos
+
+
+_fullscreen_previous_handle_event = KillZoneApp.handle_event
+
+
+def _fullscreen_handle_event(self, event):
+    event = self.normalize_event_pos(event)
+    if event.type == pygame.MOUSEMOTION:
+        self.mouse = event.pos
+    return _fullscreen_previous_handle_event(self, event)
+
+
+KillZoneApp.handle_event = _fullscreen_handle_event
