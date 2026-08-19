@@ -3,19 +3,13 @@ import gzip
 import tempfile
 
 _root = Path(__file__).resolve().parent
-_test_parts = sorted((_root / "src" / "test_parts_v4").glob("part_*.gzpart"))
-_game_parts = sorted((_root / "src" / "kill_zone_parts_v4").glob("part_*.pyfrag.gz"))
-if not _test_parts or not _game_parts:
-    raise RuntimeError("Kill Zone test or game source fragments are missing")
-_test_source = gzip.decompress(b"".join(p.read_bytes() for p in _test_parts)).decode("utf-8")
+_test_payload = _root / "src" / "self_test_v5.py.gz"
+_game_parts = sorted((_root / "src" / "kill_zone_parts_v5").glob("part_*.pyfrag.gz"))
+if not _test_payload.exists() or not _game_parts:
+    raise RuntimeError("Kill Zone v5 test/game payload is missing")
+_test_source = gzip.decompress(_test_payload.read_bytes()).decode("utf-8")
 _game_source = "".join(gzip.decompress(p.read_bytes()).decode("utf-8") for p in _game_parts)
-
-_old = '            elif e.key==pygame.K_ESCAPE:\n                self.running=False\n'
-_new = '            elif e.key==pygame.K_ESCAPE:\n                return  # main-menu Escape is intentionally a no-op; use the Quit button\n'
-_game_source = _game_source.replace(_old, _new, 1)
-assert _old not in _game_source, "Escape on the main menu must not terminate the application"
-
-with tempfile.TemporaryDirectory(prefix="kill_zone_tests_") as _tmp:
+with tempfile.TemporaryDirectory(prefix="kill_zone_v5_tests_") as _tmp:
     _tmp = Path(_tmp)
     (_tmp / "kill_zone.py").write_text(_game_source, encoding="utf-8")
     _ns = {"__name__": "__main__", "__file__": str(_tmp / "self_test.py")}
