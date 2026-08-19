@@ -6,10 +6,10 @@ Kill Zone is a top-down realtime infantry tactics prototype built around suppres
 
 The current expansion adds a second battle direction and a larger pre-battle command layer:
 
-- **Defensive Battle** reverses deployment to the eastern trench system and asks the player to hold three escalating attack waves for 3, 5, or 7 minutes. A live HUD tracks time, wave state, sector stability, and command-post capture pressure.
+- **Defensive Battle** reverses deployment to the eastern trench system and asks the player to hold three escalating attack waves for 3, 5, or 7 minutes. Attackers assess observed resistance, organize role-aware assault groups, concentrate on weak sectors, and coordinate breachers, maneuver troops, fire support, medics, and builders. A live HUD tracks time, wave state, sector stability, and command-post capture pressure.
 - **Advanced Operations** selects Assault or Defense, an automatic or named battlefield, automatic or forced weather, and light/standard/reinforced enemy strength while preserving the existing roster, difficulty, reserves, and numeric seed controls.
 - **Squad Doctrine** lets selected squads cycle between Cautious, Balanced, and Aggressive with `Shift+D` or right-clicking a squad tab. Doctrine changes default movement pace, survival autonomy, smoke/cover reactions, and moving-fire policy.
-- **Engineer Construction** opens with `Shift+B` or the sidebar button. Choose a project, click any valid reachable site, and the nearest available engineer automatically moves there and builds it like an RTS worker. Both factions can construct sandbags, wire, trenches, MG turrets, field guns, and artillery batteries. Static weapons are destructible, engage automatically, and do not consume squad capacity.
+- **Engineer Construction** opens with `Shift+B` or the sidebar button. Choose a project, click any valid reachable site, and the nearest available engineer automatically moves there and builds it like an RTS worker. Both factions can construct sandbags, wire, trenches, MG turrets, field guns, and artillery batteries. Every project has a distinct palette preview; completed MG nests, field guns, and artillery use dedicated weapon silhouettes rather than infantry symbols. Static weapons are destructible, engage automatically, and do not consume squad capacity.
 - Enemy engineers use the same construction pipeline and temporary caps/cooldowns. Construction is deliberately free in this preview; supplies and logistics are reserved for the next balance update.
 
 ## Current release hardening
@@ -65,7 +65,7 @@ python benchmark.py
 python build_release.py --zip
 ```
 
-The validation stack contains 71 historical model tests, 35 focused maintenance/expansion regressions, a dependency-free UI smoke test, and a real Pygame runtime/render smoke test. `stress_test.py` adds configurable Easy/Hard/Veteran Assault or Defense matrices with numerical, bounds, cache, transient-effect, and stale-state invariants.
+The validation stack contains 71 historical model tests, 37 focused maintenance/expansion regressions, a dependency-free UI smoke test, and a real Pygame runtime/render smoke test. `stress_test.py` adds configurable Easy/Hard/Veteran Assault or Defense matrices with numerical, bounds, cache, transient-effect, and stale-state invariants.
 
 ## Source layout
 

@@ -2151,6 +2151,17 @@ OPERATION_ENEMY_STRENGTHS = (0.8, 1.0, 1.25)
 OPERATION_DEFENSE_DURATIONS = (180, 300, 420)
 SQUAD_DOCTRINES = ("cautious", "balanced", "aggressive")
 STATIC_WEAPON_ROLES = frozenset(("MG Emplacement", "Field Gun", "Artillery Battery"))
+DEFENSE_ATTACK_SECTORS = ("NORTH", "CENTRE", "SOUTH")
+DEFENSE_FIRE_SUPPORT_ROLES = frozenset(
+    ("Machine Gunner", "HMG Crew", "Mortar Team", "Marksman", "Sniper")
+)
+DEFENSE_BREACH_ROLES = frozenset(("Assault", "Grenadier"))
+DEFENSE_SUSTAINMENT_ROLES = frozenset(("Medic", "Engineer"))
+EMPLACEMENT_VISUALS = {
+    "MG Emplacement": {"label": "MG", "silhouette": "bunker_mount"},
+    "Field Gun": {"label": "GUN", "silhouette": "wheeled_gun"},
+    "Artillery Battery": {"label": "ART", "silhouette": "heavy_howitzer"},
+}
 
 WEAPONS.update(
     {
@@ -2453,6 +2464,7 @@ def _operation_configure_defense(self):
     self.notify("MISSION — Hold the defensive line", kind="objective", duration=5.0)
     self._vs_event("mission", self.mission_title, (self.primary_line_x, MAP_H // 2))
     _kz_rebuild_indexes(self)
+    self.plan_defense_attack(force=True)
 
 
 def _operation_refresh_force_counts(self):
@@ -2511,6 +2523,11 @@ def _operation_init(
     self._last_engineer_builder_update = 0.0
     self.construction_reservations = {}
     self._defense_attack_order_timer = 0.0
+    self._defense_next_plan_time = 0.0
+    self.defense_attack_plan = {}
+    self.defense_sector_pressure = {sector: 0.0 for sector in DEFENSE_ATTACK_SECTORS}
+    self.defense_main_effort = "CENTRE"
+    self.defense_plan_revision = 0
     _operation_previous_init(
         self,
         seed=seed,
@@ -2970,17 +2987,36 @@ RealTimeGame.update_emplacements = _operation_update_emplacements
 def _operation_enemy_builder_position(self, engineer):
     candidates = []
     ex, ey = engineer.tile
+    sector = getattr(engineer, "attack_sector", getattr(self, "defense_main_effort", "CENTRE"))
+    sector_y = _operation_defense_sector_center(sector)
     for y in range(max(1, ey - 2), min(MAP_H - 1, ey + 3)):
         for x in range(max(1, ex - 2), min(MAP_W - 1, ex + 3)):
             if (x, y) == engineer.tile or self.unit_at(x, y) is not None:
                 continue
             if self.grid[y][x].terrain not in ("open", "mud", "rubble", "crater", "foxhole", "hill"):
                 continue
-            candidates.append((abs(y - MAP_H / 2), abs(x - ex) + abs(y - ey), x, y))
+            candidates.append(
+                (
+                    self.tile_threat("enemy", x, y),
+                    abs(y - sector_y),
+                    -x,
+                    abs(x - ex) + abs(y - ey),
+                    x,
+                    y,
+                )
+            )
     if not candidates:
         return None
     candidates.sort()
-    return candidates[0][2], candidates[0][3]
+    return candidates[0][-2], candidates[0][-1]
+
+
+def _operation_enemy_builder_ready(self, engineer):
+    if self.mission_type != "defense":
+        return True
+    existing = self.static_emplacement_count("enemy")
+    staging_offset = 20 if existing == 0 else 14 if existing == 1 else 7
+    return engineer.x >= self.primary_line_x - staging_offset
 
 
 def _operation_update_enemy_builders(self):
@@ -2997,6 +3033,7 @@ def _operation_update_enemy_builders(self):
         and getattr(unit, "reserve_active", True)
         and unit.order in ("idle", "overwatch")
         and unit.action_timer <= 0
+        and self.enemy_builder_ready(unit)
         and self.time >= getattr(unit, "next_builder_decision", 8.0)
     ]
     for engineer in engineers[:1]:
@@ -3014,6 +3051,7 @@ def _operation_update_enemy_builders(self):
 
 
 RealTimeGame.enemy_builder_position = _operation_enemy_builder_position
+RealTimeGame.enemy_builder_ready = _operation_enemy_builder_ready
 RealTimeGame.update_enemy_builders = _operation_update_enemy_builders
 
 
@@ -3032,6 +3070,7 @@ def _operation_activate_defense_wave(self, wave):
     self.defense_wave_announced.add(wave)
     self.notify(f"ENEMY WAVE {wave} COMMITTED", kind="danger", duration=5.0)
     self._vs_event("reserve", f"Enemy assault wave {wave} committed", (5, MAP_H // 2))
+    self.plan_defense_attack(force=True)
 
 
 RealTimeGame.activate_defense_wave = _operation_activate_defense_wave
@@ -3040,31 +3079,245 @@ RealTimeGame.activate_defense_wave = _operation_activate_defense_wave
 _operation_previous_ai_decide = RealTimeGame.ai_decide
 
 
+def _operation_defense_assignment_for_role(role):
+    if role in DEFENSE_BREACH_ROLES:
+        return "breach"
+    if role in DEFENSE_FIRE_SUPPORT_ROLES:
+        return "fire_support"
+    if role in DEFENSE_SUSTAINMENT_ROLES:
+        return "sustainment"
+    return "assault"
+
+
+def _operation_defense_sector_for_y(y):
+    if y < MAP_H / 3:
+        return "NORTH"
+    if y >= MAP_H * 2 / 3:
+        return "SOUTH"
+    return "CENTRE"
+
+
+def _operation_defense_sector_center(sector):
+    return {
+        "NORTH": max(4, MAP_H // 6),
+        "CENTRE": MAP_H // 2,
+        "SOUTH": min(MAP_H - 5, MAP_H * 5 // 6),
+    }.get(sector, MAP_H // 2)
+
+
+def _operation_plan_defense_attack(self, force=False):
+    if self.mission_type != "defense":
+        return False
+    if not force and self.time < self._defense_next_plan_time:
+        return False
+    tactics = max(0.45, DIFFICULTY[self.difficulty].get("tactics", 1.0))
+    self._defense_next_plan_time = self.time + max(2.4, 5.5 / tactics)
+
+    pressure = {sector: 0.0 for sector in DEFENSE_ATTACK_SECTORS}
+    contact_weights = {
+        "MG Emplacement": 4.6,
+        "Field Gun": 4.2,
+        "Artillery Battery": 3.7,
+        "Machine Gunner": 2.7,
+        "HMG Crew": 3.2,
+        "Sniper": 2.1,
+        "Marksman": 1.9,
+        "Engineer": 1.7,
+        "Grenadier": 1.5,
+    }
+    for _uid, info, age in self.known_contacts("enemy", memory=22.0):
+        x, y = info["pos"]
+        if x < self.primary_line_x - 10:
+            continue
+        sector = _operation_defense_sector_for_y(y)
+        freshness = clamp(1.0 - age / 28.0, 0.35, 1.0)
+        pressure[sector] += contact_weights.get(info.get("role"), 1.0) * freshness
+
+    # Defensive works are legitimate battlefield intelligence and stop the
+    # planner from repeatedly choosing the most heavily fortified approach.
+    for y in range(1, MAP_H - 1):
+        sector = _operation_defense_sector_for_y(y)
+        for x in range(max(1, self.primary_line_x - 2), MAP_W - 1):
+            terrain = self.grid[y][x].terrain
+            if terrain == "trench":
+                pressure[sector] += 0.12
+            elif terrain == "sandbags":
+                pressure[sector] += 0.24
+            elif terrain == "wire":
+                pressure[sector] += 0.17
+
+    ranked = sorted(
+        DEFENSE_ATTACK_SECTORS,
+        key=lambda sector: (pressure[sector], DEFENSE_ATTACK_SECTORS.index(sector)),
+    )
+    previous_effort = self.defense_main_effort
+    self.defense_main_effort = ranked[0]
+    self.defense_sector_pressure = {sector: round(value, 2) for sector, value in pressure.items()}
+    self.defense_plan_revision += 1
+
+    active = [
+        unit
+        for unit in self.living("enemy")
+        if unit.combat_effective
+        and unit.role not in STATIC_WEAPON_ROLES
+        and getattr(unit, "reserve_active", True)
+    ]
+    maneuver = []
+    assault_slot = 0
+    for unit in sorted(active, key=lambda item: item.uid):
+        assignment = _operation_defense_assignment_for_role(unit.role)
+        if assignment == "breach":
+            sector = ranked[0]
+        elif assignment == "assault":
+            # Most maneuver strength goes to the weak sector while a smaller
+            # fixing element prevents the defender from freely redeploying.
+            sector_pattern = (ranked[0], ranked[1], ranked[0], ranked[0], ranked[2])
+            sector = sector_pattern[assault_slot % len(sector_pattern)]
+            assault_slot += 1
+        else:
+            sector = ranked[0]
+        unit.attack_assignment = assignment
+        unit.attack_sector = sector
+        unit.plan_state = f"{assignment}:{sector.lower()}"
+        self.defense_attack_plan[unit.uid] = {
+            "assignment": assignment,
+            "sector": sector,
+            "wave": getattr(unit, "attack_wave", 1),
+            "revision": self.defense_plan_revision,
+        }
+        if assignment in ("breach", "assault"):
+            maneuver.append(unit)
+
+    for unit in active:
+        if unit.attack_assignment not in ("fire_support", "sustainment") or not maneuver:
+            continue
+        lead = min(maneuver, key=lambda item: abs(item.y - unit.y))
+        unit.attack_sector = lead.attack_sector
+        unit.plan_state = f"{unit.attack_assignment}:{unit.attack_sector.lower()}"
+        self.defense_attack_plan[unit.uid]["sector"] = unit.attack_sector
+
+    live_ids = {unit.uid for unit in active}
+    self.defense_attack_plan = {
+        uid: plan for uid, plan in self.defense_attack_plan.items() if uid in live_ids
+    }
+    if previous_effort != self.defense_main_effort and self.time > 1:
+        self.add_log(f"Enemy assault shifted toward the {self.defense_main_effort.lower()} sector.")
+    return True
+
+
+def _operation_defense_sector_front(self, sector):
+    maneuver = [
+        unit.x
+        for unit in self.living("enemy")
+        if unit.combat_effective
+        and getattr(unit, "reserve_active", True)
+        and getattr(unit, "attack_sector", self.defense_main_effort) == sector
+        and getattr(unit, "attack_assignment", "assault") in ("breach", "assault")
+    ]
+    if maneuver:
+        return max(maneuver)
+    fallback = [
+        unit.x
+        for unit in self.living("enemy")
+        if unit.combat_effective
+        and getattr(unit, "reserve_active", True)
+        and getattr(unit, "attack_assignment", "assault") in ("breach", "assault")
+    ]
+    return max(fallback, default=7.0)
+
+
 def _operation_defense_attack_destination(self, unit):
-    """Return an open, distributed waypoint that keeps an assault moving east."""
+    """Return a role-aware, open waypoint for the coordinated assault."""
+    assignment = getattr(unit, "attack_assignment", _operation_defense_assignment_for_role(unit.role))
+    sector = getattr(unit, "attack_sector", self.defense_main_effort)
     primary = self.primary_line_x
     secondary = self.secondary_line_x
     command = self.map_features.get("command_post", (MAP_W - 4, MAP_H // 2))
-    if unit.x < primary - 4.5:
+    front_x = self.defense_sector_front(sector)
+    progress_x = front_x if assignment in ("fire_support", "sustainment") else unit.x
+    if progress_x < primary - 4.5:
         target_x = primary - 4
-    elif unit.x < primary + 1.5:
+    elif progress_x < primary + 1.5:
         target_x = primary + 1
-    elif unit.x < secondary - 2.5:
+    elif progress_x < secondary - 2.5:
         target_x = secondary - 2
     else:
         target_x = command[0]
 
-    sector_center = {
-        "NORTH": max(4, MAP_H // 6),
-        "CENTRE": MAP_H // 2,
-        "SOUTH": min(MAP_H - 5, MAP_H * 5 // 6),
-    }.get(getattr(unit, "battle_sector", "CENTRE"), MAP_H // 2)
-    lane_offset = ((unit.uid * 3) % 9) - 4
+    if assignment == "fire_support":
+        target_x = min(target_x - 4, max(unit.x, front_x - 5))
+    elif assignment == "sustainment":
+        target_x = min(target_x - 2, max(unit.x, front_x - 3))
+
+    sector_center = _operation_defense_sector_center(sector)
+    lane_offset = ((unit.uid * 3) % 7) - 3
+    if unit.role == "Recon":
+        lane_offset += -4 if unit.uid % 2 else 4
     target_y = int(clamp(sector_center + lane_offset, 2, MAP_H - 3))
     if target_x >= command[0] - 1:
         target_y = int(clamp(command[1] + lane_offset // 2, 2, MAP_H - 3))
     destination = _operation_open_position(self, target_x, target_y, unit, radius=5)
     return destination or (int(clamp(target_x, 1, MAP_W - 2)), target_y)
+
+
+def _operation_defense_select_target(self, unit, visible):
+    assignment = getattr(unit, "attack_assignment", "assault")
+    claims = {}
+    for attacker in self.living("enemy"):
+        if attacker.target_uid is not None and attacker.order in ("fire", "suppress"):
+            claims[attacker.target_uid] = claims.get(attacker.target_uid, 0) + 1
+
+    def target_score(target):
+        distance = dist(unit, target)
+        cluster = sum(
+            other.combat_effective and dist(target, other) <= 2.4
+            for other in self.living("player")
+        )
+        score = 34.0 - distance * 1.35 - claims.get(target.uid, 0) * 3.0
+        score -= self.effective_cover(unit, target) * 1.4
+        if target.role in STATIC_WEAPON_ROLES:
+            score += 20 if assignment == "breach" else 13
+        if target.role in ("Machine Gunner", "HMG Crew", "Sniper", "Marksman"):
+            score += 11
+        if target.role in ("Medic", "Engineer") and unit.role in ("Sniper", "Marksman"):
+            score += 10
+        if assignment == "fire_support":
+            score += cluster * 3.5
+        if unit.role == "Grenadier":
+            score += cluster * 4.0
+        if target.casualty == "wounded":
+            score -= 4
+        return score
+
+    return max(visible, key=target_score)
+
+
+def _operation_issue_defense_tactical_order(self, unit):
+    destination = self.defense_attack_destination(unit)
+    assignment = getattr(unit, "attack_assignment", "assault")
+    distance = dist(unit.pos, destination)
+    if assignment == "fire_support" and distance <= 2.6:
+        facing = angle_to(unit, (MAP_W - 2, _operation_defense_sector_center(unit.attack_sector)))
+        if unit.role in ("Machine Gunner", "HMG Crew"):
+            if not unit.deployed:
+                self.toggle_deploy(unit)
+            else:
+                self.set_fire_lane(unit, facing, 82)
+        else:
+            self.set_overwatch(unit, facing, 105)
+        return
+    if assignment == "sustainment" and distance <= 2.3:
+        self.set_overwatch(unit, angle_to(unit, destination), 120)
+        return
+    if distance > 2.2:
+        if unit.role in ("Machine Gunner", "HMG Crew") and unit.deployed:
+            self.toggle_deploy(unit)
+            return
+        mode = "safe" if assignment in ("fire_support", "sustainment") or unit.suppression > 45 else "fast"
+        formation = "wedge" if assignment in ("breach", "assault") else "column"
+        self.issue_move([unit], destination, mode=mode, formation=formation)
+    else:
+        self.set_overwatch(unit, angle_to(unit, (MAP_W - 2, destination[1])), 110)
 
 
 def _operation_ai_decide(self, unit):
@@ -3082,12 +3335,30 @@ def _operation_ai_decide(self, unit):
     if unit.ammo <= 0 and unit.magazines:
         self.start_reload(unit)
         return
+    if unit.role == "Medic" and unit.med_supplies > 0:
+        wounded = [
+            ally
+            for ally in self.living("enemy")
+            if ally.uid != unit.uid
+            and ally.casualty in ("wounded", "incapacitated")
+            and getattr(ally, "reserve_active", True)
+        ]
+        if wounded:
+            patient = min(wounded, key=lambda ally: dist(unit, ally))
+            if dist(unit, patient) <= 1.5:
+                self.medic_action(unit, patient)
+                return
+            approach = _operation_open_position(self, patient.x, patient.y, unit, radius=2)
+            if approach is not None and dist(unit, patient) < 10:
+                self.issue_move([unit], approach, mode="safe", formation="column")
+                return
     if unit.role == "Engineer" and unit.order == "build":
         return
     if (
         unit.role == "Engineer"
         and self.static_emplacement_count("enemy") < 4
         and self.time >= getattr(unit, "next_builder_decision", 8.0)
+        and self.enemy_builder_ready(unit)
     ):
         # Leave the engineer idle for the shared builder pass that runs after
         # AI decisions; it will select and validate adjacent construction.
@@ -3101,19 +3372,26 @@ def _operation_ai_decide(self, unit):
         if target.combat_effective and self.can_see(unit, target)
     ]
     if visible:
-        target = min(
-            visible,
-            key=lambda item: (
-                0 if item.role in ("MG Emplacement", "Field Gun", "Artillery Battery", "Machine Gunner", "Engineer") else 1,
-                dist(unit, item),
-            ),
-        )
+        target = self.defense_select_target(unit, visible)
         distance = dist(unit, target)
-        if unit.smoke_grenades > 0 and unit.suppression > 58 and distance < 8:
+        assignment = getattr(unit, "attack_assignment", "assault")
+        cluster = sum(
+            other.combat_effective and dist(target, other) <= 2.4
+            for other in self.living("player")
+        )
+        if (
+            unit.smoke_grenades > 0
+            and unit.suppression > 48
+            and assignment in ("breach", "assault")
+            and distance < 9
+        ):
             self.throw_grenade(unit, unit.pos, smoke=True)
             return
-        if unit.grenades > 0 and distance < 4.2:
+        if unit.grenades > 0 and distance < 4.2 and (cluster >= 2 or self.effective_cover(unit, target) >= 2):
             self.throw_grenade(unit, target.pos, cook=0.6)
+            return
+        if unit.role == "Grenadier" and unit.rifle_grenades > 0 and 4 < distance < 7:
+            self.throw_grenade(unit, target.pos, rifle=True)
             return
         if unit.role in ("Machine Gunner", "HMG Crew"):
             if not unit.deployed:
@@ -3121,22 +3399,34 @@ def _operation_ai_decide(self, unit):
             elif distance <= unit.weapon["range"]:
                 self.suppress_area(unit, target.pos)
             return
+        if unit.role == "Automatic Rifleman" and cluster >= 2 and distance <= unit.weapon["range"]:
+            self.suppress_area(unit, target.pos)
+            return
+        if unit.role == "Mortar Team" and 5 <= distance <= 22 and unit.mortar_shells > 0:
+            if not unit.deployed:
+                self.toggle_deploy(unit)
+            else:
+                self.mortar_fire(unit, target.pos)
+            return
+        if unit.role in ("Sniper", "Marksman") and distance <= unit.weapon["range"]:
+            self.issue_fire(unit, target, "aimed")
+            return
         if distance <= unit.weapon["range"]:
-            mode = "rapid" if self.doctrine_for(unit) == "aggressive" and distance < 7 else "normal"
+            mode = "rapid" if assignment == "breach" and distance < 6 else "normal"
             self.issue_fire(unit, target, mode)
             return
-    destination = self.defense_attack_destination(unit)
-    if unit.role in ("Machine Gunner", "HMG Crew") and unit.deployed:
-        self.toggle_deploy(unit)
-        return
-    if unit.order in ("idle", "overwatch", "fire_lane") and dist(unit.pos, destination) > 2.5:
-        self.issue_move([unit], destination, mode="safe" if unit.role in ("Medic", "Engineer") else "fast", formation="column")
-    elif dist(unit.pos, destination) <= 3.5:
-        self.set_overwatch(unit, 0, 110)
+    if unit.order in ("idle", "overwatch", "fire_lane") or (
+        unit.order == "move" and not unit.path and not unit.waypoints
+    ):
+        self.issue_defense_tactical_order(unit)
 
 
 RealTimeGame.ai_decide = _operation_ai_decide
+RealTimeGame.plan_defense_attack = _operation_plan_defense_attack
+RealTimeGame.defense_sector_front = _operation_defense_sector_front
 RealTimeGame.defense_attack_destination = _operation_defense_attack_destination
+RealTimeGame.defense_select_target = _operation_defense_select_target
+RealTimeGame.issue_defense_tactical_order = _operation_issue_defense_tactical_order
 
 
 def _operation_update_defense_attack_orders(self, dt):
@@ -3146,6 +3436,7 @@ def _operation_update_defense_attack_orders(self, dt):
     if self._defense_attack_order_timer < 0.75:
         return
     self._defense_attack_order_timer = 0.0
+    self.plan_defense_attack()
     for unit in self.living("enemy"):
         if (
             not unit.combat_effective
@@ -3167,16 +3458,7 @@ def _operation_update_defense_attack_orders(self, dt):
         )
         if not stalled:
             continue
-        if unit.role in ("Machine Gunner", "HMG Crew") and unit.deployed:
-            self.toggle_deploy(unit)
-            continue
-        destination = self.defense_attack_destination(unit)
-        self.issue_move(
-            [unit],
-            destination,
-            mode="safe" if unit.role in ("Medic", "Engineer") else "fast",
-            formation="column",
-        )
+        self.issue_defense_tactical_order(unit)
 
 
 RealTimeGame.update_defense_attack_orders = _operation_update_defense_attack_orders
@@ -3772,6 +4054,53 @@ KillZoneApp.build_button_rect = _operation_build_button_rect
 KillZoneApp.build_menu_rects = _operation_build_menu_rects
 
 
+def _operation_draw_build_preview(self, kind, rect):
+    color = COLORS["objective"] if "role" in ENGINEER_BUILD_TYPES[kind] else COLORS["blue"]
+    ink = COLORS["black"]
+    cx, cy = rect.right - 30, rect.centery - 3
+    if kind == "sandbags":
+        for row, count in enumerate((3, 2)):
+            for column in range(count):
+                sack = pygame.Rect(cx - 14 + column * 10 + row * 5, cy - 7 + row * 7, 9, 6)
+                pygame.draw.ellipse(self.screen, color, sack)
+                pygame.draw.ellipse(self.screen, ink, sack, 1)
+    elif kind == "wire":
+        pygame.draw.line(self.screen, color, (cx - 15, cy - 8), (cx + 15, cy + 8), 2)
+        pygame.draw.line(self.screen, color, (cx + 15, cy - 8), (cx - 15, cy + 8), 2)
+        for offset in (-10, 0, 10):
+            pygame.draw.circle(self.screen, color, (cx + offset, cy), 3, 1)
+    elif kind == "trench":
+        pygame.draw.lines(
+            self.screen,
+            color,
+            False,
+            ((cx - 16, cy - 9), (cx - 7, cy + 7), (cx + 2, cy - 7), (cx + 16, cy + 8)),
+            3,
+        )
+        pygame.draw.lines(
+            self.screen,
+            ink,
+            False,
+            ((cx - 14, cy - 9), (cx - 5, cy + 5), (cx + 3, cy - 5), (cx + 15, cy + 7)),
+            1,
+        )
+    elif kind == "mg_nest":
+        pygame.draw.arc(self.screen, color, pygame.Rect(cx - 16, cy - 11, 32, 22), math.pi, math.tau, 4)
+        pygame.draw.circle(self.screen, color, (cx, cy), 4)
+        pygame.draw.line(self.screen, color, (cx, cy), (cx + 17, cy - 4), 3)
+    elif kind == "field_gun":
+        pygame.draw.circle(self.screen, color, (cx - 8, cy + 6), 7, 2)
+        pygame.draw.circle(self.screen, color, (cx + 8, cy + 6), 7, 2)
+        pygame.draw.rect(self.screen, color, pygame.Rect(cx - 8, cy - 6, 16, 11), 2)
+        pygame.draw.line(self.screen, color, (cx, cy - 2), (cx + 18, cy - 9), 3)
+    elif kind == "artillery":
+        pygame.draw.circle(self.screen, color, (cx - 10, cy + 5), 7, 2)
+        pygame.draw.circle(self.screen, color, (cx + 10, cy + 5), 7, 2)
+        pygame.draw.line(self.screen, color, (cx, cy), (cx + 16, cy - 12), 5)
+        pygame.draw.line(self.screen, color, (cx - 2, cy + 3), (cx - 14, cy + 13), 3)
+        pygame.draw.line(self.screen, color, (cx + 2, cy + 3), (cx + 14, cy + 13), 3)
+
+
 def _operation_draw_build_menu(self):
     rects = self.build_menu_rects()
     panel = rects["panel"]
@@ -3793,6 +4122,7 @@ def _operation_draw_build_menu(self):
         pygame.draw.rect(self.screen, COLORS["objective"] if "role" in definition else COLORS["blue"], rect, 1, border_radius=4)
         self.text(definition["label"], (rect.x + 12, rect.y + 11), 12, "white")
         self.text(definition["description"], (rect.x + 12, rect.y + 38), 8, "muted")
+        self.draw_build_preview(kind, rect)
     self.button(rects["cancel"], "CLOSE", self.mouse)
     self.text(
         "FREE BUILD PREVIEW · static weapon cap 6 per side · supply/logistics costs follow next update",
@@ -3803,6 +4133,7 @@ def _operation_draw_build_menu(self):
 
 
 KillZoneApp.draw_build_menu = _operation_draw_build_menu
+KillZoneApp.draw_build_preview = _operation_draw_build_preview
 
 
 _operation_previous_draw_command_bar = KillZoneApp.draw_command_bar
@@ -3947,18 +4278,125 @@ _operation_previous_draw_unit = KillZoneApp.draw_unit
 
 
 def _operation_draw_unit(self, unit):
-    _operation_previous_draw_unit(self, unit)
-    if unit.role not in STATIC_WEAPON_ROLES or not unit.alive:
+    if unit.role not in STATIC_WEAPON_ROLES:
+        _operation_previous_draw_unit(self, unit)
         return
     center_x, center_y = self.world_to_screen(unit.x, unit.y)
     if not self.map_view_rect().inflate(35, 35).collidepoint((center_x, center_y)):
         return
+
     color = COLORS["nato_friend"] if unit.faction == "player" else COLORS["nato_hostile"]
-    radius = max(10, int(self.tile_px * 0.48))
-    pygame.draw.circle(self.screen, color, (center_x, center_y), radius, 2)
-    label = {"MG Emplacement": "MG", "Field Gun": "GUN", "Artillery Battery": "ART"}[unit.role]
-    surface = self.cached_text_surface(label, 8, "white")
-    self.screen.blit(surface, (center_x - surface.get_width() // 2, center_y - radius - 12))
+    ink = COLORS["black"]
+    scale = max(0.72, self.tile_px / 20.0)
+    radius = max(11, round(13 * scale))
+    angle = math.radians(unit.facing)
+    forward = (math.cos(angle), math.sin(angle))
+    normal = (-forward[1], forward[0])
+
+    def point(ahead=0.0, side=0.0):
+        return (
+            round(center_x + forward[0] * ahead * scale + normal[0] * side * scale),
+            round(center_y + forward[1] * ahead * scale + normal[1] * side * scale),
+        )
+
+    if not unit.alive:
+        pygame.draw.circle(self.screen, COLORS["muted"], (center_x, center_y), radius, 2)
+        pygame.draw.line(
+            self.screen,
+            COLORS["muted"],
+            (center_x - radius, center_y - radius),
+            (center_x + radius, center_y + radius),
+            3,
+        )
+        pygame.draw.line(
+            self.screen,
+            COLORS["muted"],
+            (center_x + radius, center_y - radius),
+            (center_x - radius, center_y + radius),
+            3,
+        )
+        return
+
+    if unit.role == "MG Emplacement":
+        # Low armored cupola, sandbag arc, tripod and a clearly oriented barrel.
+        bunker = pygame.Rect(center_x - radius, center_y - radius + 3, radius * 2, radius * 2 - 3)
+        pygame.draw.arc(self.screen, color, bunker, math.pi, math.tau, max(3, round(4 * scale)))
+        for side in (-8, 0, 8):
+            pygame.draw.circle(self.screen, color, point(-4, side), max(3, round(3 * scale)))
+            pygame.draw.circle(self.screen, ink, point(-4, side), max(3, round(3 * scale)), 1)
+        pygame.draw.circle(self.screen, color, (center_x, center_y), max(4, round(5 * scale)))
+        pygame.draw.circle(self.screen, ink, (center_x, center_y), max(4, round(5 * scale)), 1)
+        pygame.draw.line(self.screen, ink, point(1), point(16), max(3, round(3 * scale)))
+        pygame.draw.line(self.screen, color, point(2), point(17), max(2, round(2 * scale)))
+        pygame.draw.line(self.screen, color, point(-1), point(-9, -7), 2)
+        pygame.draw.line(self.screen, color, point(-1), point(-9, 7), 2)
+    elif unit.role == "Field Gun":
+        # Two-wheel carriage, gun shield and long direct-fire barrel.
+        wheel_radius = max(5, round(6 * scale))
+        for side in (-8, 8):
+            wheel = point(-2, side)
+            pygame.draw.circle(self.screen, color, wheel, wheel_radius, max(2, round(2 * scale)))
+            pygame.draw.circle(self.screen, ink, wheel, max(2, round(2 * scale)))
+        shield = [point(2, -8), point(5, -6), point(5, 6), point(2, 8), point(-3, 5), point(-3, -5)]
+        pygame.draw.polygon(self.screen, color, shield)
+        pygame.draw.polygon(self.screen, ink, shield, 2)
+        pygame.draw.line(self.screen, ink, point(2), point(20), max(4, round(4 * scale)))
+        pygame.draw.line(self.screen, color, point(4), point(21), max(2, round(2 * scale)))
+        pygame.draw.line(self.screen, color, point(-2), point(-14), max(3, round(3 * scale)))
+    else:
+        # Heavy howitzer: large wheels, elevated barrel and split trails.
+        wheel_radius = max(6, round(7 * scale))
+        for side in (-9, 9):
+            wheel = point(-1, side)
+            pygame.draw.circle(self.screen, color, wheel, wheel_radius, max(3, round(3 * scale)))
+            pygame.draw.circle(self.screen, ink, wheel, max(2, round(2 * scale)))
+        breech = pygame.Rect(0, 0, max(8, round(10 * scale)), max(7, round(8 * scale)))
+        breech.center = point(1)
+        pygame.draw.rect(self.screen, color, breech, border_radius=2)
+        pygame.draw.rect(self.screen, ink, breech, 2, border_radius=2)
+        elevated_tip = point(19, -6)
+        pygame.draw.line(self.screen, ink, point(3), elevated_tip, max(6, round(6 * scale)))
+        pygame.draw.line(self.screen, color, point(4), elevated_tip, max(3, round(3 * scale)))
+        pygame.draw.line(self.screen, color, point(-3), point(-16, -9), max(3, round(3 * scale)))
+        pygame.draw.line(self.screen, color, point(-3), point(-16, 9), max(3, round(3 * scale)))
+
+    # Affiliation is carried by color and a compact frame, while the interior
+    # silhouette communicates the actual weapon instead of an infantry X.
+    if unit.faction == "player":
+        pygame.draw.rect(
+            self.screen,
+            color,
+            pygame.Rect(center_x - radius - 2, center_y - radius - 2, radius * 2 + 4, radius * 2 + 4),
+            1,
+        )
+    else:
+        pygame.draw.polygon(
+            self.screen,
+            color,
+            ((center_x, center_y - radius - 3), (center_x + radius + 3, center_y),
+             (center_x, center_y + radius + 3), (center_x - radius - 3, center_y)),
+            1,
+        )
+
+    if unit.uid in self.selected:
+        pygame.draw.circle(self.screen, COLORS["select"], (center_x, center_y), radius + 6, 2)
+    visual = EMPLACEMENT_VISUALS[unit.role]
+    surface = self.cached_text_surface(visual["label"], 8, "white")
+    self.screen.blit(surface, (center_x - surface.get_width() // 2, center_y - radius - 14))
+    bar_width = radius * 2
+    bar_y = center_y + radius + 7
+    pygame.draw.rect(self.screen, COLORS["black"], (center_x - radius, bar_y, bar_width, 3))
+    pygame.draw.rect(
+        self.screen,
+        COLORS["good"],
+        (center_x - radius, bar_y, round(bar_width * clamp(unit.hp / unit.max_hp, 0, 1)), 3),
+    )
+    if unit.suppression > 15:
+        pygame.draw.rect(
+            self.screen,
+            COLORS["contact"],
+            (center_x - radius, bar_y + 4, round(bar_width * unit.suppression / 100), 2),
+        )
 
 
 KillZoneApp.draw_unit = _operation_draw_unit

@@ -583,6 +583,49 @@ def test_defense_attackers_advance_toward_open_assault_waypoints():
     assert any(unit.order in ("move", "fire", "suppress") for unit in surviving_attackers)
 
 
+def test_defense_planner_assigns_roles_and_reacts_to_observed_resistance():
+    game = kz.RealTimeGame(
+        seed=1028,
+        difficulty="Hard",
+        operation_config={"mission": "defense", "defense_duration": 180},
+    )
+    active = [unit for unit in game.living("enemy") if unit.reserve_active]
+    assert len(game.defense_attack_plan) == len(active)
+    assert all(
+        unit.attack_assignment == "breach"
+        for unit in active
+        if unit.role in ("Assault", "Grenadier")
+    )
+    assert all(
+        unit.attack_assignment == "fire_support"
+        for unit in active
+        if unit.role in ("Machine Gunner", "Marksman", "Sniper", "HMG Crew")
+    )
+    assault_units = [unit for unit in active if unit.attack_assignment == "assault"]
+    assert any(unit.attack_sector != game.defense_main_effort for unit in assault_units)
+
+    previous_effort = game.defense_main_effort
+    contact_y = kz.MAP_H // 6 if previous_effort == "NORTH" else kz.MAP_H // 2 if previous_effort == "CENTRE" else kz.MAP_H * 5 // 6
+    for index in range(6):
+        game.intel["enemy"][10_000 + index] = {
+            "pos": (game.primary_line_x, contact_y),
+            "seen": game.time,
+            "role": "MG Emplacement",
+        }
+    game.plan_defense_attack(force=True)
+    assert game.defense_main_effort != previous_effort
+    assert game.defense_sector_pressure[previous_effort] == max(game.defense_sector_pressure.values())
+
+    game.activate_defense_wave(2)
+    sustainment = [
+        unit
+        for unit in game.living("enemy")
+        if unit.reserve_active and unit.role in ("Medic", "Engineer")
+    ]
+    assert sustainment and all(unit.attack_assignment == "sustainment" for unit in sustainment)
+    assert all(not game.enemy_builder_ready(unit) for unit in sustainment if unit.role == "Engineer")
+
+
 def test_defense_reserves_enter_from_the_east_only_once():
     game = kz.RealTimeGame(
         seed=1025,
@@ -651,6 +694,18 @@ def test_engineers_construct_defenses_and_static_weapons_for_both_sides():
     app = object.__new__(kz.KillZoneApp)
     app.game = game
     assert 0 not in app.squad_rects()
+
+
+def test_engineer_emplacements_have_unique_non_infantry_visuals():
+    assert set(kz.EMPLACEMENT_VISUALS) == set(kz.STATIC_WEAPON_ROLES)
+    silhouettes = {
+        definition["silhouette"]
+        for definition in kz.EMPLACEMENT_VISUALS.values()
+    }
+    labels = {definition["label"] for definition in kz.EMPLACEMENT_VISUALS.values()}
+    assert len(silhouettes) == len(kz.STATIC_WEAPON_ROLES)
+    assert len(labels) == len(kz.STATIC_WEAPON_ROLES)
+    assert not silhouettes & {"infantry", "rifleman"}
 
 
 def test_rts_construction_moves_an_available_engineer_to_the_blueprint():

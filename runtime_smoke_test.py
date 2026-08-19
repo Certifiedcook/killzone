@@ -125,6 +125,36 @@ def main():
     pygame.image.save(app.screen, construction_menu)
     assert construction_menu.stat().st_size > 1_000
     app.build_menu_open = False
+
+    visual_sites = []
+    for y in range(2, kz.MAP_H - 2):
+        for x in range(2, kz.MAP_W - 2):
+            if len(visual_sites) == len(kz.STATIC_WEAPON_ROLES):
+                break
+            if not app.map_view_rect().collidepoint(app.cell_rect(x, y).center):
+                continue
+            if app.game.unit_at(x, y) is not None:
+                continue
+            if app.game.grid[y][x].terrain not in ("open", "mud", "rubble", "crater", "foxhole", "hill"):
+                continue
+            if any(abs(x - sx) + abs(y - sy) < 5 for sx, sy in visual_sites):
+                continue
+            visual_sites.append((x, y))
+        if len(visual_sites) == len(kz.STATIC_WEAPON_ROLES):
+            break
+    assert len(visual_sites) == len(kz.STATIC_WEAPON_ROLES)
+    for role, site in zip(sorted(kz.STATIC_WEAPON_ROLES), visual_sites, strict=True):
+        emplacement = app.game.add_unit("player", role, *site)
+        emplacement.is_emplacement = True
+        emplacement.squad_id = 0
+        emplacement.deployed = True
+        emplacement.hold_position = True
+        emplacement.facing = 330
+    app.draw()
+    emplacement_designs = output_dir / "emplacement_designs.png"
+    pygame.image.save(app.screen, emplacement_designs)
+    assert emplacement_designs.stat().st_size > 1_000
+
     assert app.cycle_selected_doctrine() == "aggressive"
     app.selected = [unit.uid for unit in app.game.living("player")[:4]]
 
