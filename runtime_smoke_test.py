@@ -29,6 +29,33 @@ def main():
         app.state = state
         app.draw()
 
+    app.state = "operation_setup"
+    app.draw()
+    operations_setup = output_dir / "operations_setup.png"
+    pygame.image.save(app.screen, operations_setup)
+    assert operations_setup.stat().st_size > 1_000
+
+    app.setup_mission = "defense"
+    app.setup_variant = "ruined_village"
+    app.setup_weather = "fog"
+    app.setup_enemy_strength = 1.25
+    app.setup_defense_duration = 180
+    app.start_battle()
+    assert app.game.mission_type == "defense"
+    assert app.game.deployment_zone_side == "east"
+    app.draw()
+    defense_briefing = output_dir / "defense_briefing.png"
+    pygame.image.save(app.screen, defense_briefing)
+    assert defense_briefing.stat().st_size > 1_000
+
+    # Return to the default Assault operation for the established rendering
+    # and tactical-control smoke path below.
+    app.setup_mission = "assault"
+    app.setup_variant = "auto"
+    app.setup_weather = "auto"
+    app.setup_enemy_strength = 1.0
+    app.setup_defense_duration = 300
+
     app.ui_scale = 1.1
     app.large_text = True
     app._text_surface_cache.clear()
@@ -52,6 +79,18 @@ def main():
     app.selected = [unit.uid for unit in app.game.living("player")[:4]]
     app.draw()
     app.finalize_deployment()
+
+    engineer = next(unit for unit in app.game.living("player") if unit.role == "Engineer")
+    app.selected = [engineer.uid]
+    app.show_help = False
+    app.build_menu_open = True
+    app.draw()
+    construction_menu = output_dir / "construction_menu.png"
+    pygame.image.save(app.screen, construction_menu)
+    assert construction_menu.stat().st_size > 1_000
+    app.build_menu_open = False
+    assert app.cycle_selected_doctrine() == "aggressive"
+    app.selected = [unit.uid for unit in app.game.living("player")[:4]]
 
     # Exercise the in-battle command guide separately, then leave the final
     # screenshot focused on the battlefield/UI visual smoke target.

@@ -46,8 +46,16 @@ def assert_invariants(game):
             assert unit.target_uid is None and unit.reaction_target_uid is None
 
 
-def run_battle(difficulty, seed, seconds):
-    game = kz.RealTimeGame(seed=seed, difficulty=difficulty, reserve_count=3)
+def run_battle(difficulty, seed, seconds, mission="assault"):
+    game = kz.RealTimeGame(
+        seed=seed,
+        difficulty=difficulty,
+        reserve_count=3,
+        operation_config={
+            "mission": mission,
+            "defense_duration": max(180, round(seconds)),
+        },
+    )
     ticks = round(seconds / kz.SIM_DT)
     next_order = 0
     started = time.perf_counter()
@@ -56,12 +64,16 @@ def run_battle(difficulty, seed, seconds):
         if tick >= next_order and not (game.victory or game.defeat):
             players = [unit for unit in game.living("player") if unit.combat_effective]
             objective = game.current_objective
-            if players and objective:
+            if players and objective and mission == "assault":
                 destination = objective["pos"]
                 game.issue_move(players, destination, mode="safe", formation="spread")
                 assault_group = players[: min(6, len(players))]
                 if len(assault_group) >= 2:
                     game.assault_position(assault_group, destination)
+            elif players and mission == "defense":
+                for unit in players:
+                    if unit.order == "idle":
+                        game.set_overwatch(unit, 180, 110)
             if game.player_reserves and game.time >= seconds * 0.2:
                 game.deploy_player_reserves()
             next_order = tick + round(8 / kz.SIM_DT)
@@ -87,6 +99,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seconds", type=float, default=60.0)
     parser.add_argument("--seeds", type=int, default=4, help="seeds per difficulty")
+    parser.add_argument("--mission", choices=kz.OPERATION_MISSIONS, default="assault")
     args = parser.parse_args()
     if args.seconds <= 0 or args.seeds <= 0:
         parser.error("--seconds and --seeds must be positive")
@@ -95,7 +108,7 @@ def main():
     for difficulty_index, difficulty in enumerate(kz.DIFFICULTY):
         for offset in range(args.seeds):
             seed = 20_000 + difficulty_index * 1_000 + offset * 137
-            result = run_battle(difficulty, seed, args.seconds)
+            result = run_battle(difficulty, seed, args.seconds, mission=args.mission)
             results.append(result)
             print(
                 f"PASS {difficulty:7s} seed={seed} sim={result['simulated']:5.1f}s "
@@ -104,7 +117,10 @@ def main():
             )
 
     total_wall = sum(result["wall"] for result in results)
-    print(f"STRESS PASS: {len(results)} battles, {sum(r['simulated'] for r in results):.1f}s simulated, {total_wall:.2f}s wall time")
+    print(
+        f"STRESS PASS ({args.mission}): {len(results)} battles, "
+        f"{sum(r['simulated'] for r in results):.1f}s simulated, {total_wall:.2f}s wall time"
+    )
 
 
 if __name__ == "__main__":

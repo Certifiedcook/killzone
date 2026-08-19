@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — Operations & Engineering
+
+### Operations
+
+- Added Defensive Battle mode with east-side deployment, three timed assault waves, sequential hold objectives, sector stability, a contested command post, and dedicated victory/defeat rules.
+- Added Advanced Operations setup for mission type, deterministic battlefield selection, forced/automatic weather, 80/100/125% enemy force strength, and 3/5/7-minute defense duration.
+- Added defense-specific briefing, deployment instructions, objective language, countdown/wave/command-post HUD, and after-action event recording.
+
+### Squad doctrine
+
+- Added Cautious, Balanced, and Aggressive squad doctrines, cycled with `Shift+D` or by right-clicking a squad tab.
+- Doctrine now affects default movement pace, automatic smoke/cover reactions, and whether advancing troops attempt moving fire.
+- Added persistent doctrine feedback beside the engineer controls and in the field manual.
+
+### Engineering
+
+- Engineers on both factions can now construct sandbags, wire, trenches, MG turrets, field guns, and artillery batteries from a visual `Shift+B` construction palette.
+- Static weapons are destructible combat units with independent direct/indirect fire behavior and no squad-capacity cost.
+- Enemy engineers use the same construction pipeline with AI build choices, build time, cooldowns, and a temporary emplacement cap.
+- Construction currently has no supply cost by design; supplies and logistics are deferred to the next balance update.
+
+### Testing
+
+- Added regressions for deterministic operation options, defense deployment/waves, doctrine policy, and construction for both factions.
+- Expanded the focused maintenance/expansion regression suite from 28 to 33 tests, including east-side defensive reserves.
+
 ## Unreleased — release hardening
 
 ### Fixed
