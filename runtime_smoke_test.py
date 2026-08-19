@@ -19,6 +19,9 @@ import kill_zone as kz
 def main():
     app = kz.KillZoneApp()
     assert app.screen.get_size() == (kz.WINDOW_W, kz.WINDOW_H)
+    if pygame.mixer.get_init():
+        assert set(kz.TACTICAL_AUDIO_VOLUMES).issubset(app._tactical_audio)
+        assert app.play_tactical_sound("command")
     output_dir = Path("test_output")
     output_dir.mkdir(exist_ok=True)
 
@@ -133,6 +136,46 @@ def main():
     planned_unit.waypoints = []
     planned_unit.command_queue = []
     planned_unit.order = "idle"
+
+    # Stage critical states, a recent friendly casualty ping, and one selected
+    # off-screen squad member for a focused readability screenshot.
+    readable_units = app.selected_units()[:4]
+    snapshots = [
+        {
+            "x": unit.x,
+            "y": unit.y,
+            "hp": unit.hp,
+            "casualty": unit.casualty,
+            "suppression": unit.suppression,
+            "morale_state": unit.morale_state,
+            "ammo": unit.ammo,
+            "magazines": list(unit.magazines),
+        }
+        for unit in readable_units
+    ]
+    readable_units[0].hp = 48
+    readable_units[0].casualty = "wounded"
+    readable_units[1].suppression = 88
+    readable_units[1].morale_state = "PINNED"
+    readable_units[2].ammo = 0
+    readable_units[2].magazines = []
+    readable_units[3].x = kz.MAP_W - 2
+    app.game.battle_events.append(
+        {
+            "time": app.game.time,
+            "kind": "casualty",
+            "text": "player Rifleman wounded",
+            "pos": readable_units[0].pos,
+        }
+    )
+    app.draw()
+    readability = output_dir / "battlefield_readability.png"
+    pygame.image.save(app.screen, readability)
+    assert readability.stat().st_size > 1_000
+    app.game.battle_events.pop()
+    for unit, snapshot in zip(readable_units, snapshots, strict=True):
+        for field, value in snapshot.items():
+            setattr(unit, field, value)
 
     app.mouse = (0, 0)
     app.draw()

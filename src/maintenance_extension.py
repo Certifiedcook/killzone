@@ -734,6 +734,12 @@ def _maintenance_draw_command_guide(self, standalone=False):
         10,
         "muted",
     )
+    self.text(
+        "Map status: BREAK/PIN · WND/AID/CASEVAC · JAM/RLD/EMPTY · edge arrows track selected off-screen troops",
+        (x + 24, footer_y + 143),
+        8,
+        "contact",
+    )
 
     if standalone:
         self.button(self.help_menu_rects()["back"], "BACK", self.mouse, accent=True)
@@ -1568,3 +1574,415 @@ def _fullscreen_handle_event(self, event):
 
 
 KillZoneApp.handle_event = _fullscreen_handle_event
+
+
+# =============================================================================
+# BATTLEFIELD AUDIO / READABILITY PASS
+# =============================================================================
+
+TACTICAL_AUDIO_VOLUMES = {
+    "select": 0.10,
+    "command": 0.14,
+    "deny": 0.15,
+    "contact": 0.16,
+    "warning": 0.19,
+    "casualty": 0.18,
+    "objective": 0.18,
+}
+
+
+def battlefield_status_badge(unit, game_time=0.0):
+    """Return the highest-priority compact battlefield status for a unit."""
+    morale_state = getattr(unit, "morale_state", "STEADY")
+    if unit.order == "rout" or morale_state in ("BREAKING", "ROUTING"):
+        return "BREAK", "danger"
+    if morale_state == "PINNED" or unit.suppression >= 80:
+        return "PIN", "suppression"
+    if unit.order == "medic":
+        return "AID", "good"
+    if unit.carrying_uid is not None or unit.dragging_uid is not None:
+        return "CASEVAC", "objective"
+    if unit.casualty == "wounded" or unit.hp < unit.max_hp * 0.6:
+        return "WND", "danger"
+    if unit.jammed:
+        return "JAM", "danger"
+    if unit.ammo <= 0 and not unit.magazines:
+        return "NO AMMO", "danger"
+    if unit.reload_timer > 0:
+        return "RLD", "blue"
+    if unit.ammo <= 0:
+        return "EMPTY", "objective"
+    if game_time < getattr(unit, "disoriented_until", 0.0):
+        return "CON", "contact"
+    return None
+
+
+def offscreen_indicator_point(rect, point, margin=14):
+    """Intersect a direction from the viewport centre with its inset edge."""
+    if rect.collidepoint(point):
+        return None
+    inner = rect.inflate(-margin * 2, -margin * 2)
+    center_x, center_y = rect.center
+    delta_x = point[0] - center_x
+    delta_y = point[1] - center_y
+    scales = []
+    if delta_x > 0:
+        scales.append((inner.right - center_x) / delta_x)
+    elif delta_x < 0:
+        scales.append((inner.left - center_x) / delta_x)
+    if delta_y > 0:
+        scales.append((inner.bottom - center_y) / delta_y)
+    elif delta_y < 0:
+        scales.append((inner.top - center_y) / delta_y)
+    positive = [scale for scale in scales if scale >= 0]
+    if not positive:
+        return inner.center, 0.0
+    scale = min(positive)
+    return (
+        (round(center_x + delta_x * scale), round(center_y + delta_y * scale)),
+        math.atan2(delta_y, delta_x),
+    )
+
+
+def battle_audio_cue_for_event(event):
+    kind = event.get("kind", "")
+    text = event.get("text", "").lower()
+    if kind == "casualty":
+        return "casualty" if text.startswith("player ") else None
+    if kind in ("counterattack",):
+        return "warning"
+    if kind == "reserve":
+        return "warning" if "enemy" in text else "command"
+    if kind == "surrender":
+        return "casualty" if "player" in text else "objective"
+    if kind in ("objective", "collapse", "victory"):
+        return "objective"
+    if kind == "mission":
+        return "contact"
+    return None
+
+
+def battlefield_event_style(event):
+    kind = event.get("kind", "")
+    text = event.get("text", "").lower()
+    if kind == "casualty" and text.startswith("player "):
+        return "CASUALTY", "danger"
+    if kind == "counterattack":
+        return "COUNTERATTACK", "danger"
+    if kind == "reserve":
+        return ("ENEMY RESERVE", "danger") if "enemy" in text else ("RESERVES", "select")
+    if kind == "objective":
+        return "OBJECTIVE", "good"
+    if kind == "collapse":
+        return "LINE BREAK", "good"
+    if kind == "victory":
+        return "VICTORY", "good"
+    if kind == "surrender" and "player" not in text:
+        return "SURRENDER", "good"
+    return None
+
+
+def _feedback_make_pcm_sound(self, kind):
+    """Build short non-verbal tactical cues without requiring new assets."""
+    try:
+        mixer_init = pygame.mixer.get_init()
+        if not mixer_init:
+            return None
+        import struct
+
+        rate, bits, channels = mixer_init
+        durations = {
+            "select": 0.045,
+            "command": 0.13,
+            "deny": 0.18,
+            "contact": 0.24,
+            "warning": 0.38,
+            "casualty": 0.34,
+            "objective": 0.52,
+        }
+        duration = durations[kind]
+        sample_count = max(1, int(rate * duration))
+        randomizer = random.Random(8100 + sum(ord(character) for character in kind))
+        buffer = bytearray()
+        filtered_noise = 0.0
+        for index in range(sample_count):
+            seconds = index / rate
+            progress = index / max(1, sample_count - 1)
+            envelope = (1.0 - progress) ** 1.6
+            if kind == "select":
+                value = math.sin(math.tau * 920 * seconds) * envelope
+            elif kind == "command":
+                frequency = 610 if progress < 0.42 else 880
+                gate = 1.0 if progress < 0.34 or progress > 0.50 else 0.0
+                value = math.sin(math.tau * frequency * seconds) * envelope * gate
+            elif kind == "deny":
+                frequency = 280 - 105 * progress
+                value = math.sin(math.tau * frequency * seconds) * envelope
+            elif kind == "contact":
+                filtered_noise = filtered_noise * 0.72 + (randomizer.random() * 2 - 1) * 0.28
+                tone = math.sin(math.tau * 430 * seconds) * (1.0 if 0.18 < progress < 0.72 else 0.0)
+                value = (filtered_noise * 0.52 + tone * 0.28) * envelope
+            elif kind == "warning":
+                gate = 1.0 if int(progress * 5) % 2 == 0 else 0.22
+                value = math.sin(math.tau * 235 * seconds) * envelope * gate
+            elif kind == "casualty":
+                frequency = 330 if progress < 0.45 else 205
+                gate = 1.0 if progress < 0.34 or progress > 0.52 else 0.12
+                value = math.sin(math.tau * frequency * seconds) * envelope * gate
+            else:  # objective
+                frequency = 420 + 430 * progress
+                harmonic = math.sin(math.tau * frequency * seconds)
+                value = (harmonic + 0.35 * math.sin(math.tau * frequency * 1.5 * seconds)) * envelope
+            sample = int(clamp(value, -1, 1) * 20000)
+            if abs(bits) == 16:
+                packed = struct.pack("<h", sample)
+            else:
+                packed = bytes([int(clamp(128 + sample / 256, 0, 255))])
+            buffer.extend(packed * channels)
+        return pygame.mixer.Sound(buffer=bytes(buffer))
+    except Exception:
+        return None
+
+
+KillZoneApp.make_tactical_pcm_sound = _feedback_make_pcm_sound
+
+
+def _feedback_ensure_audio(self):
+    if not getattr(self, "audio_enabled", False):
+        return
+    if not hasattr(self, "_tactical_audio"):
+        self._tactical_audio = {}
+    for kind in TACTICAL_AUDIO_VOLUMES:
+        if kind not in self._tactical_audio:
+            sound = self.make_tactical_pcm_sound(kind)
+            if sound is not None:
+                self._tactical_audio[kind] = sound
+
+
+KillZoneApp.ensure_tactical_audio = _feedback_ensure_audio
+
+
+def _feedback_play_sound(self, kind):
+    if not getattr(self, "audio_enabled", False):
+        return False
+    self.ensure_tactical_audio()
+    sound = getattr(self, "_tactical_audio", {}).get(kind)
+    if sound is None:
+        return False
+    now = time.perf_counter()
+    cooldown = 0.7 if kind in ("warning", "casualty", "objective") else 0.09
+    last_played = getattr(self, "_tactical_audio_last", {}).get(kind, -99.0)
+    if now - last_played < cooldown:
+        return False
+    self._tactical_audio_last[kind] = now
+    try:
+        channel = sound.play()
+        if channel:
+            channel.set_volume(TACTICAL_AUDIO_VOLUMES[kind])
+        return channel is not None
+    except pygame.error:
+        return False
+
+
+KillZoneApp.play_tactical_sound = _feedback_play_sound
+
+
+_feedback_previous_app_init = KillZoneApp.__init__
+
+
+def _feedback_app_init(self):
+    _feedback_previous_app_init(self)
+    self._tactical_audio = {}
+    self._tactical_audio_last = {}
+    self._tactical_audio_game = id(self.game)
+    self._tactical_audio_last_event = self.game.battle_events[-1] if self.game.battle_events else None
+    self._tactical_audio_last_event_time = (
+        self.game.battle_events[-1].get("time", -99.0) if self.game.battle_events else -99.0
+    )
+    self._tactical_audio_stage = getattr(self.game, "battle_stage", "APPROACH")
+    self.ensure_tactical_audio()
+
+
+KillZoneApp.__init__ = _feedback_app_init
+
+
+def _feedback_poll_battle_audio(self):
+    game_identity = id(self.game)
+    events = getattr(self.game, "battle_events", [])
+    if game_identity != getattr(self, "_tactical_audio_game", None):
+        self._tactical_audio_game = game_identity
+        self._tactical_audio_last_event = None
+        self._tactical_audio_last_event_time = -99.0
+        self._tactical_audio_stage = getattr(self.game, "battle_stage", "APPROACH")
+
+    last_event = getattr(self, "_tactical_audio_last_event", None)
+    start = 0
+    found_last_event = last_event is None
+    if last_event is not None:
+        for index, event in enumerate(events):
+            if event is last_event:
+                start = index + 1
+                found_last_event = True
+                break
+    if not found_last_event:
+        last_event_time = getattr(self, "_tactical_audio_last_event_time", -99.0)
+        start = next(
+            (index for index, event in enumerate(events) if event.get("time", -99.0) > last_event_time),
+            len(events),
+        )
+    for event in events[start:]:
+        cue = battle_audio_cue_for_event(event)
+        if cue:
+            self.play_tactical_sound(cue)
+    if events:
+        self._tactical_audio_last_event = events[-1]
+        self._tactical_audio_last_event_time = events[-1].get("time", -99.0)
+
+    stage = getattr(self.game, "battle_stage", "APPROACH")
+    previous_stage = getattr(self, "_tactical_audio_stage", stage)
+    if stage != previous_stage:
+        cue = {"CONTACT": "contact", "ASSAULT": "command", "COLLAPSE": "objective"}.get(stage)
+        if cue:
+            self.play_tactical_sound(cue)
+        self._tactical_audio_stage = stage
+
+
+KillZoneApp.poll_tactical_audio = _feedback_poll_battle_audio
+
+
+_feedback_previous_update_ambience = KillZoneApp.update_ambience
+
+
+def _feedback_update_ambience(self):
+    result = _feedback_previous_update_ambience(self)
+    if self.state in ("deployment", "game"):
+        self.poll_tactical_audio()
+    return result
+
+
+KillZoneApp.update_ambience = _feedback_update_ambience
+
+
+_feedback_previous_notify = _qol_notify
+
+
+def _qol_notify(app, text, kind="info", duration=1.8):
+    _feedback_previous_notify(app, text, kind=kind, duration=duration)
+    if not hasattr(app, "play_tactical_sound"):
+        return
+    lowered = text.lower()
+    if kind == "danger":
+        cue = "deny"
+    elif "selected" in lowered:
+        cue = "select"
+    elif any(word in lowered for word in ("confirmed", "ready", "assigned", "cancelled")) or ":" in text:
+        cue = "command"
+    else:
+        return
+    app.play_tactical_sound(cue)
+
+
+_feedback_previous_draw_unit = KillZoneApp.draw_unit
+
+
+def _feedback_draw_unit(self, unit):
+    _feedback_previous_draw_unit(self, unit)
+    if unit.faction != "player" or not unit.combat_effective:
+        return
+    badge = battlefield_status_badge(unit, self.game.time)
+    if badge is None:
+        return
+    center_x, center_y = self.world_to_screen(unit.x, unit.y)
+    if not self.map_view_rect().inflate(40, 40).collidepoint((center_x, center_y)):
+        return
+    label, color_key = badge
+    surface = self.cached_text_surface(label, 8, "black")
+    width = max(25, surface.get_width() + 10)
+    height = 13
+    y = center_y - max(33, int(self.tile_px * 1.08))
+    rect = pygame.Rect(center_x - width // 2, y - height // 2, width, height)
+    pygame.draw.rect(self.screen, COLORS[color_key], rect, border_radius=3)
+    pygame.draw.rect(self.screen, COLORS["black"], rect, 1, border_radius=3)
+    self.screen.blit(surface, (rect.centerx - surface.get_width() // 2, rect.centery - surface.get_height() // 2))
+
+
+KillZoneApp.draw_unit = _feedback_draw_unit
+
+
+def _feedback_draw_edge_arrow(self, world_screen_pos, color, label=None):
+    indicator = offscreen_indicator_point(self.map_view_rect(), world_screen_pos)
+    if indicator is None:
+        return False
+    (center_x, center_y), angle = indicator
+    direction_x, direction_y = math.cos(angle), math.sin(angle)
+    perpendicular_x, perpendicular_y = -direction_y, direction_x
+    tip = (round(center_x + direction_x * 8), round(center_y + direction_y * 8))
+    back_x, back_y = center_x - direction_x * 6, center_y - direction_y * 6
+    left = (round(back_x + perpendicular_x * 5), round(back_y + perpendicular_y * 5))
+    right = (round(back_x - perpendicular_x * 5), round(back_y - perpendicular_y * 5))
+    pygame.draw.polygon(self.screen, color, (tip, left, right))
+    pygame.draw.polygon(self.screen, COLORS["black"], (tip, left, right), 1)
+    if label:
+        surface = self.cached_text_surface(label, 8, "white")
+        label_x = round(center_x - direction_x * 17 - surface.get_width() / 2)
+        label_y = round(center_y - direction_y * 17 - surface.get_height() / 2)
+        self.screen.blit(surface, (label_x, label_y))
+    return True
+
+
+KillZoneApp.draw_edge_arrow = _feedback_draw_edge_arrow
+
+
+def _feedback_draw_readability(self):
+    map_rect = self.map_view_rect()
+    active_badges = []
+    for unit in self.selected_units()[:16]:
+        status = battlefield_status_badge(unit, self.game.time)
+        if status and status[0] not in active_badges:
+            active_badges.append(status[0])
+        screen_pos = self.world_to_screen(unit.x, unit.y)
+        if not map_rect.collidepoint(screen_pos):
+            color = squad_visual_color(getattr(unit, "squad_id", 1))
+            self.draw_edge_arrow(screen_pos, color, str(getattr(unit, "squad_id", 1)))
+
+    for event in getattr(self.game, "battle_events", [])[-20:]:
+        style = battlefield_event_style(event)
+        position = event.get("pos")
+        age = self.game.time - event.get("time", -99.0)
+        if style is None or position is None or not 0 <= age <= 4.0:
+            continue
+        label, color_key = style
+        color = COLORS[color_key]
+        screen_pos = self.world_to_screen(*position)
+        if not map_rect.collidepoint(screen_pos):
+            self.draw_edge_arrow(screen_pos, color, "!")
+            continue
+        radius = 12 + int(age * 3)
+        pygame.draw.circle(self.screen, color, screen_pos, radius, 2 if age < 1.5 else 1)
+        text_surface = self.cached_text_surface(label, 8, color_key)
+        text_x = int(clamp(screen_pos[0] + 12, map_rect.left + 4, map_rect.right - text_surface.get_width() - 4))
+        text_y = int(clamp(screen_pos[1] - 18, map_rect.top + 4, map_rect.bottom - 14))
+        self.screen.blit(text_surface, (text_x, text_y))
+
+    if active_badges:
+        legend = "STATUS  " + " · ".join(active_badges[:5])
+        surface = self.cached_text_surface(legend, 8, "white")
+        rect = pygame.Rect(map_rect.left + 7, map_rect.bottom - 22, surface.get_width() + 14, 16)
+        pygame.draw.rect(self.screen, (25, 28, 24), rect, border_radius=3)
+        pygame.draw.rect(self.screen, COLORS["muted"], rect, 1, border_radius=3)
+        self.screen.blit(surface, (rect.x + 7, rect.y + 3))
+
+
+KillZoneApp.draw_battlefield_readability = _feedback_draw_readability
+
+
+_feedback_previous_draw_map = KillZoneApp.draw_map
+
+
+def _feedback_draw_map(self):
+    _feedback_previous_draw_map(self)
+    if self.state in ("deployment", "game"):
+        self.draw_battlefield_readability()
+
+
+KillZoneApp.draw_map = _feedback_draw_map

@@ -122,7 +122,9 @@ This build hardens the vertical slice rather than expanding its content scope. I
 - Expanded shot-chance breakdown explaining cover, range, stance, suppression, smoke, preparation, flank/enfilade, weather, and fire mode.
 - Four procedural battlefield variants: open farmland, wooded ridge, ruined village, and ridgeline.
 - Stronger static terrain detailing for trenches, craters, woods, buildings, and sandbags.
-- Distance-aware combat audio, procedural bullet-snap/impact/thump layers, and restrained distant battlefield ambience.
+- Distance-aware combat audio, procedural bullet-snap/impact/thump layers, restrained distant battlefield ambience, and distinct tactical cues for orders, contact, casualties, warnings, and objectives.
+- Critical status badges identify pinned, breaking, wounded, treating, evacuating, jammed, reloading, and ammunition-starved troops directly on the battlefield.
+- Recent friendly casualties and major tactical events receive short-lived map pings; selected troops outside the camera view receive squad-colored edge arrows.
 - Expanded after-action report with objective completion, force statistics, and a key-event timeline.
 
 The existing optimization architecture is retained: pathfinding/AI work remains budgeted across simulation ticks, threat and occupancy lookups are cached, transient effects are capped, and render FPS remains uncapped by default. Logistics expansion is still intentionally deferred.
@@ -192,6 +194,8 @@ The historical model suite contains **71 tests**. Use `validate.bat` for the com
 - Press a squad number twice quickly to select and center its troops. Use **Shift+W**, **Shift+P**, and **Shift+I** to select all wounded, pinned/breaking, or idle troops.
 - Hover unit cards for full health, loaded/reserve ammunition, suppression, morale, and condition details.
 - Planned movement and queued move/fire orders use stronger colored paths and numbered destination markers.
+- Tactical audio acknowledges orders and distinguishes first contact, friendly casualties, counterattacks, reserves, and objective progress without revealing hidden enemy positions.
+- Critical-state badges, recent-event pings, and squad-colored off-screen arrows make battlefield emergencies easier to locate.
 - Settings now include 90/100/110% UI scale and a larger-text toggle, and automatically persist display, audio, performance, speed, help, and accessibility preferences.
 - A bottom unit-card strip gives health/suppression status and direct selection for up to 16 deployed troops.
 - Visible drag-box selection remains supported with the camera and zoom system.

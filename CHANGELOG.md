@@ -22,6 +22,8 @@
 - Added hover explanations, capability-aware disabled buttons, target-mode reticles, Escape-to-cancel, command confirmations, and double-tap squad focus.
 - Added detailed unit-card tooltips, stronger numbered queued-order markers, and wounded/pinned/idle selection shortcuts.
 - Added UI scale and larger-text settings with automatic JSON persistence for display, audio, performance, speed, help, and accessibility preferences.
+- Added tactical order/contact/casualty/warning/objective sounds on top of the existing distance-aware combat mix.
+- Added critical unit-status badges, recent tactical-event pings, and squad-colored off-screen selection arrows.
 
 ### Performance
 
@@ -32,7 +34,7 @@
 
 ### Testing and tooling
 
-- Added 24 focused maintenance regressions.
+- Added 27 focused maintenance regressions.
 - Added real headless Pygame menu, battle, zoom, camera, profiler, and display-mode rendering coverage.
 - Added configurable deterministic stress testing across all difficulties.
 - Added a repeatable 16-unit fixed-step benchmark.

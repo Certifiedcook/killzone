@@ -447,6 +447,51 @@ def test_fullscreen_clicks_are_scaled_once_at_the_input_boundary():
     assert app.settings_rects()["help"].collidepoint(event.pos)
 
 
+def test_battlefield_status_badges_prioritize_critical_states():
+    game = fresh(1019)
+    unit = game.add_unit("player", "Rifleman", 2, 2)
+    unit.casualty = "wounded"
+    unit.hp = 48
+    assert kz.battlefield_status_badge(unit, game.time) == ("WND", "danger")
+
+    unit.suppression = 86
+    unit.morale_state = "PINNED"
+    assert kz.battlefield_status_badge(unit, game.time) == ("PIN", "suppression")
+
+    unit.suppression = 0
+    unit.morale_state = "STEADY"
+    unit.casualty = "healthy"
+    unit.hp = unit.max_hp
+    unit.ammo = 0
+    unit.magazines = []
+    assert kz.battlefield_status_badge(unit, game.time) == ("NO AMMO", "danger")
+
+
+def test_offscreen_indicator_intersects_the_viewport_edge():
+    rect = kz.pygame.Rect(10, 20, 100, 80)
+    point, angle = kz.offscreen_indicator_point(rect, (220, 60), margin=14)
+    assert point[0] == rect.right - 14
+    assert rect.top < point[1] < rect.bottom
+    assert abs(angle) < 0.001
+    assert kz.offscreen_indicator_point(rect, rect.center) is None
+
+
+def test_tactical_events_have_distinct_audio_and_visual_feedback():
+    player_loss = {"kind": "casualty", "text": "player Rifleman incapacitated"}
+    enemy_loss = {"kind": "casualty", "text": "enemy Rifleman incapacitated"}
+    counterattack = {"kind": "counterattack", "text": "Enemy counterattack"}
+    objective = {"kind": "objective", "text": "Objective complete"}
+    friendly_surrender = {"kind": "surrender", "text": "player Rifleman surrendered"}
+
+    assert kz.battle_audio_cue_for_event(player_loss) == "casualty"
+    assert kz.battle_audio_cue_for_event(enemy_loss) is None
+    assert kz.battle_audio_cue_for_event(counterattack) == "warning"
+    assert kz.battle_audio_cue_for_event(objective) == "objective"
+    assert kz.battle_audio_cue_for_event(friendly_surrender) == "casualty"
+    assert kz.battlefield_event_style(player_loss) == ("CASUALTY", "danger")
+    assert kz.battlefield_event_style(enemy_loss) is None
+
+
 def test_multiseed_simulation_invariants():
     for difficulty, seed in zip(kz.DIFFICULTY, (1011, 1012, 1013), strict=True):
         game = kz.RealTimeGame(seed=seed, difficulty=difficulty, reserve_count=2)
