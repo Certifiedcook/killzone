@@ -24,6 +24,7 @@
 - Added UI scale and larger-text settings with automatic JSON persistence for display, audio, performance, speed, help, and accessibility preferences.
 - Added tactical order/contact/casualty/warning/objective sounds on top of the existing distance-aware combat mix.
 - Added critical unit-status badges, recent tactical-event pings, and squad-colored off-screen selection arrows.
+- Mobile infantry now fires at visible targets while advancing according to fire discipline, with a substantial accuracy penalty; crew-served weapons and pinned troops remain unable to fire on the move.
 
 ### Performance
 
@@ -34,7 +35,7 @@
 
 ### Testing and tooling
 
-- Added 27 focused maintenance regressions.
+- Added 28 focused maintenance regressions.
 - Added real headless Pygame menu, battle, zoom, camera, profiler, and display-mode rendering coverage.
 - Added configurable deterministic stress testing across all difficulties.
 - Added a repeatable 16-unit fixed-step benchmark.

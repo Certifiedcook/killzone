@@ -492,6 +492,37 @@ def test_tactical_events_have_distinct_audio_and_visual_feedback():
     assert kz.battlefield_event_style(enemy_loss) is None
 
 
+def test_moving_troops_fire_with_an_accuracy_penalty():
+    game = fresh(1020)
+    mover = game.add_unit("player", "Rifleman", 2, 2)
+    target = game.add_unit("enemy", "Rifleman", 6, 2)
+    target.spotted_player_until = 99
+
+    stationary_chance = game.hit_chance(mover, target)
+    mover.order = "move"
+    mover.path = [(3, 2)]
+    mover.waypoints = [(9, 2)]
+    moving_chance = game.hit_chance(mover, target)
+    assert math.isclose(
+        moving_chance,
+        max(2, stationary_chance - kz.MOVING_FIRE_ACCURACY_PENALTY),
+    )
+    assert ("firing while moving", -kz.MOVING_FIRE_ACCURACY_PENALTY) in game.shot_breakdown(mover, target)["mods"]
+
+    ammunition_before = mover.ammo
+    position_before = mover.pos
+    game.update_unit(mover, kz.SIM_DT)
+    assert mover.pos != position_before
+    assert mover.ammo == ammunition_before - 1
+    assert mover.order == "move" and mover.path
+
+    mover.next_shot = game.time
+    mover.fire_discipline = "hold"
+    ammunition_before = mover.ammo
+    assert not game.try_moving_fire(mover)
+    assert mover.ammo == ammunition_before
+
+
 def test_multiseed_simulation_invariants():
     for difficulty, seed in zip(kz.DIFFICULTY, (1011, 1012, 1013), strict=True):
         game = kz.RealTimeGame(seed=seed, difficulty=difficulty, reserve_count=2)

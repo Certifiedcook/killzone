@@ -646,7 +646,7 @@ COMMAND_BAR_HELP_COLUMNS = (
         ("RELOAD", "INSTANT", "Starts reloading every selected troop that can currently reload."),
         ("STANCE", "CYCLE", "Cycles standing, crouched and prone for speed versus protection."),
         ("FORMATION", "WEDGE etc.", "The label is current formation; cycles wedge, line, column and spread."),
-        ("DISCIPLINE", "FREE etc.", "Cycles hold, return fire, free fire and confident-shot rules."),
+        ("DISCIPLINE", "FREE etc.", "Controls hold/return/free/confident fire, including less-accurate moving shots."),
         ("PRIORITY", "SPECIALIST etc.", "Cycles nearest, exposed, specialist and suppressed targets."),
         ("AUTO", "ON / OFF", "Toggles automatic reload, cover reaction, smoke and medic assistance."),
         ("HOLD", "TOGGLE", "Delays breaking and prevents automatic survival movement while enabled."),
@@ -1986,3 +1986,152 @@ def _feedback_draw_map(self):
 
 
 KillZoneApp.draw_map = _feedback_draw_map
+
+
+# =============================================================================
+# FIRE WHILE MOVING
+# =============================================================================
+
+MOVING_FIRE_ACCURACY_PENALTY = 28.0
+MOVING_FIRE_EXCLUDED_ROLES = frozenset(("HMG Crew", "Mortar Team"))
+
+
+def unit_is_firing_while_moving(unit):
+    return bool(
+        getattr(unit, "_moving_fire_active", False)
+        or (unit.order == "move" and (unit.path or unit.waypoints))
+    )
+
+
+def _moving_fire_can_attempt(self, unit):
+    morale_state = getattr(unit, "morale_state", "STEADY")
+    return bool(
+        unit.combat_effective
+        and unit.order == "move"
+        and unit.role not in MOVING_FIRE_EXCLUDED_ROLES
+        and unit.fire_discipline != "hold"
+        and unit.ammo > 0
+        and not unit.jammed
+        and unit.reload_timer <= 0
+        and unit.action_timer <= 0
+        and unit.carrying_uid is None
+        and unit.dragging_uid is None
+        and unit.suppression < 80
+        and morale_state not in ("PINNED", "BREAKING", "ROUTING")
+        and unit.heat < 100
+        and self.time >= unit.next_shot
+        and self.time >= unit.command_delay_until
+    )
+
+
+RealTimeGame.can_attempt_moving_fire = _moving_fire_can_attempt
+
+
+def _moving_fire_target(self, unit):
+    if unit.fire_discipline == "return":
+        if unit.under_fire_until <= self.time or not unit.last_attacker_uid:
+            return None
+        candidate = self.get_unit(unit.last_attacker_uid)
+        enemy_faction = "enemy" if unit.faction == "player" else "player"
+        if (
+            candidate is not None
+            and candidate.faction == enemy_faction
+            and candidate.combat_effective
+            and self.visible_to(unit.faction, candidate)
+            and self.can_see(unit, candidate)
+            and dist(unit, candidate) <= unit.weapon["range"]
+        ):
+            return candidate
+        return None
+    if unit.fire_discipline in ("free", "confident"):
+        return self.choose_auto_target(unit)
+    return None
+
+
+RealTimeGame.moving_fire_target = _moving_fire_target
+
+
+def _moving_fire_attempt(self, unit):
+    if not self.can_attempt_moving_fire(unit):
+        return False
+    unit._moving_fire_active = True
+    previous_mode = unit.fire_mode
+    try:
+        target = self.moving_fire_target(unit)
+        if target is None:
+            return False
+        # A previous aimed/rapid order must not leak into a maneuvering shot.
+        # Moving fire uses the normal cadence and pays its own explicit penalty.
+        unit.fire_mode = "normal"
+        if unit.fire_discipline == "confident" and self.hit_chance(unit, target) < 60:
+            return False
+        ammunition_before = unit.ammo
+        self.perform_shot(unit, target)
+        return unit.ammo < ammunition_before
+    finally:
+        unit.fire_mode = previous_mode
+        unit._moving_fire_active = False
+
+
+RealTimeGame.try_moving_fire = _moving_fire_attempt
+
+
+_moving_fire_previous_hit_chance = RealTimeGame.hit_chance
+
+
+def _moving_fire_hit_chance(self, attacker, target, mode=None, reaction=False):
+    chance = _moving_fire_previous_hit_chance(self, attacker, target, mode=mode, reaction=reaction)
+    if chance <= 0 or not unit_is_firing_while_moving(attacker):
+        return chance
+    return clamp(chance - MOVING_FIRE_ACCURACY_PENALTY, 2, 96)
+
+
+RealTimeGame.hit_chance = _moving_fire_hit_chance
+
+
+_moving_fire_previous_shot_breakdown = RealTimeGame.shot_breakdown
+
+
+def _moving_fire_shot_breakdown(self, attacker, target, mode=None, reaction=False):
+    breakdown = _moving_fire_previous_shot_breakdown(
+        self,
+        attacker,
+        target,
+        mode=mode,
+        reaction=reaction,
+    )
+    if unit_is_firing_while_moving(attacker) and breakdown.get("chance", 0) > 0:
+        breakdown.setdefault("mods", []).append(
+            ("firing while moving", -MOVING_FIRE_ACCURACY_PENALTY)
+        )
+    return breakdown
+
+
+RealTimeGame.shot_breakdown = _moving_fire_shot_breakdown
+
+
+_moving_fire_previous_update_unit = RealTimeGame.update_unit
+
+
+def _moving_fire_update_unit(self, unit, dt):
+    moving_before = unit.order == "move"
+    position_before = unit.pos
+    _moving_fire_previous_update_unit(self, unit, dt)
+
+    # A jam affects the weapon, not the soldier's legs. The older unit loop
+    # returns before movement when jammed, so preserve an existing move order.
+    if (
+        moving_before
+        and unit.order == "move"
+        and unit.jammed
+        and unit.combat_effective
+        and unit.pos == position_before
+    ):
+        self.update_movement(unit, dt)
+
+    moved = dist(position_before, unit.pos) > 1e-6
+    if moving_before and moved and unit.order == "move":
+        self.try_moving_fire(unit)
+
+
+RealTimeGame.update_unit = _moving_fire_update_unit

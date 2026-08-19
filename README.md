@@ -196,6 +196,7 @@ The historical model suite contains **71 tests**. Use `validate.bat` for the com
 - Planned movement and queued move/fire orders use stronger colored paths and numbered destination markers.
 - Tactical audio acknowledges orders and distinguishes first contact, friendly casualties, counterattacks, reserves, and objective progress without revealing hidden enemy positions.
 - Critical-state badges, recent-event pings, and squad-colored off-screen arrows make battlefield emergencies easier to locate.
+- Mobile infantry can engage visible targets while advancing; moving fire uses normal ammunition and weapon timing but suffers a large accuracy penalty shown in the shot breakdown.
 - Settings now include 90/100/110% UI scale and a larger-text toggle, and automatically persist display, audio, performance, speed, help, and accessibility preferences.
 - A bottom unit-card strip gives health/suppression status and direct selection for up to 16 deployed troops.
 - Visible drag-box selection remains supported with the camera and zoom system.
