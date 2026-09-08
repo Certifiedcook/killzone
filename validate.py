@@ -31,6 +31,11 @@ def main():
     args = parser.parse_args()
 
     run("self_test.py")
+    run("engine_test.py")
+    run("clock_test.py")
+    run("spatial_test.py")
+    run("performance_test.py")
+    run("benchmark_test.py")
     run("regression_test.py")
     run("multiplayer_test.py")
     run("presentation_test.py")
@@ -45,6 +50,7 @@ def main():
         run("runtime_smoke_test.py")
     if args.stress:
         run("stress_test.py", "--seconds", str(args.stress_seconds), "--seeds", str(args.stress_seeds))
+        run("stress_test.py", "--mission", "defense", "--seconds", str(args.stress_seconds), "--seeds", str(args.stress_seeds))
     print("\nALL REQUESTED VALIDATION PASSED")
 
 

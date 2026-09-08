@@ -6,8 +6,7 @@ import argparse
 import shutil
 from pathlib import Path
 
-from src.release_tools import recreate_generated_directory, write_zip
-from src.source_loader import game_source
+from src.release_tools import copy_engine, recreate_generated_directory, write_zip
 
 ROOT = Path(__file__).resolve().parent
 MARKER = ".killzone-generated-server"
@@ -21,10 +20,7 @@ def build_server(output: Path) -> None:
     )
     shutil.copy2(ROOT / "multiplayer_server" / "app.py", output / "app.py")
     shutil.copy2(ROOT / "multiplayer_server" / "requirements.txt", output / "requirements.txt")
-    (output / "kill_zone.py").write_text(game_source(ROOT), encoding="utf-8", newline="\n")
-    (output / "src").mkdir(exist_ok=True)
-    shutil.copy2(ROOT / "src" / "__init__.py", output / "src" / "__init__.py")
-    shutil.copy2(ROOT / "src" / "multiplayer_net.py", output / "src" / "multiplayer_net.py")
+    copy_engine(ROOT, output)
     (output / "SERVER_SETUP.txt").write_text(
         """KILL ZONE MULTIPLAYER — DEDICATED SERVER SETUP
 
