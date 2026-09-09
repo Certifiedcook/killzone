@@ -1,13 +1,17 @@
-"""Development entry point for the assembled Kill Zone runtime."""
+"""Desktop entry point and compatibility facade for the Kill Zone engine."""
 
-from pathlib import Path
+from engine.compat import EXPORTS, resolve
 
-from src.source_loader import game_source
+__all__ = [name for name in EXPORTS if not name.startswith("_")]
 
-ROOT = Path(__file__).resolve().parent
-SOURCE = game_source(ROOT)
-exec(  # noqa: S102 - checked-in runtime payload, not external input
-    compile(SOURCE, str(ROOT / "kill_zone_runtime.py"), "exec"),
-    globals(),
-    globals(),
-)
+
+def __getattr__(name):
+    return resolve(name)
+
+
+def __dir__():
+    return sorted(set(globals()) | set(EXPORTS))
+
+
+if __name__ == "__main__":
+    resolve("main")()

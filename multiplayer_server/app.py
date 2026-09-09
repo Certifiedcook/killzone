@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 import contextlib
 import os
 from pathlib import Path
@@ -30,6 +31,7 @@ from src.multiplayer_net import (  # noqa: E402
     MAX_PACKET_BYTES,
     PROTOCOL_VERSION,
     ProtocolError,
+    decode_payload,
     encode_packet,
 )
 
@@ -38,6 +40,7 @@ SERVICE_VERSION = "0.1.0"
 MAX_CLIENTS = 32
 MAX_ROOMS = 12
 COMMAND_RATE = 80
+SEND_TIMEOUT = 5.0
 
 
 async def read_packet(reader: asyncio.StreamReader) -> dict[str, Any]:
@@ -46,15 +49,7 @@ async def read_packet(reader: asyncio.StreamReader) -> dict[str, Any]:
     if size <= 0 or size > MAX_PACKET_BYTES:
         raise ProtocolError(f"invalid packet size {size}")
     payload = await reader.readexactly(size)
-    import json
-
-    try:
-        message = json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ProtocolError("invalid JSON packet") from exc
-    if not isinstance(message, dict) or not isinstance(message.get("type"), str):
-        raise ProtocolError("packet must contain a string type")
-    return message
+    return decode_payload(payload)
 
 
 @dataclass(eq=False)
@@ -66,7 +61,8 @@ class ClientConnection:
     greeted: bool = False
     room_id: str | None = None
     slot: int | None = None
-    command_times: list[float] = field(default_factory=list)
+    command_times: deque[float] = field(default_factory=deque)
+    send_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     @property
     def peer(self) -> str:
@@ -76,8 +72,18 @@ class ClientConnection:
     async def send(self, message_type: str, **payload: Any) -> None:
         message = {"type": message_type}
         message.update(payload)
-        self.writer.write(encode_packet(message))
-        await self.writer.drain()
+        packet = encode_packet(message)
+        try:
+            # Bound both queued senders and a peer that has stopped reading.
+            async with asyncio.timeout(SEND_TIMEOUT):
+                async with self.send_lock:
+                    if self.writer.is_closing():
+                        raise ConnectionError("connection is closing")
+                    self.writer.write(packet)
+                    await self.writer.drain()
+        except (OSError, TimeoutError):
+            self.writer.close()
+            raise
 
 
 @dataclass
@@ -135,10 +141,17 @@ class KillZoneServer:
     async def send_error(self, client: ClientConnection, code: str, message: str) -> None:
         await client.send("error", code=code, message=message[:180])
 
+    async def _send_many(self, sends) -> None:
+        results = await asyncio.gather(*sends, return_exceptions=True)
+        for result in results:
+            # Socket failures belong to the disconnected peer; encoding and
+            # simulation bugs must still reach the caller's error handler.
+            if isinstance(result, BaseException) and not isinstance(result, (OSError, TimeoutError)):
+                raise result
+
     async def broadcast(self, clients, message_type: str, **payload: Any) -> None:
-        await asyncio.gather(
-            *(client.send(message_type, **payload) for client in list(clients)),
-            return_exceptions=True,
+        await self._send_many(
+            client.send(message_type, **payload) for client in list(clients)
         )
 
     async def broadcast_room_list(self) -> None:
@@ -192,16 +205,15 @@ class KillZoneServer:
         if room.status == "match" and room.winner is None:
             room.winner = "enemy" if old_slot == 0 else "player"
             await self.finish_match(room, "opponent disconnected")
-        elif not room.players:
+        if not room.players:
             room.status = "closed"
             if room.task:
                 room.task.cancel()
             self.rooms.pop(room.room_id, None)
-        else:
+        elif room.status == "lobby":
             # The remaining player becomes the room owner/blue side in a lobby.
-            if room.status == "lobby":
-                room.players[0].slot = 0
-                await self.broadcast_lobby(room)
+            room.players[0].slot = 0
+            await self.broadcast_lobby(room)
         if not disconnected:
             await client.send("room_left")
         await self.broadcast_room_list()
@@ -220,10 +232,13 @@ class KillZoneServer:
         )
         room.game.drain_events()
         room.pending_events.clear()
-        for player in room.players:
+        snapshots = []
+        for player in list(room.players):
             faction = "player" if player.slot == 0 else "enemy"
             snapshot = kz.serialize_network_snapshot(room.game, faction)
-            await player.send(
+            snapshots.append((player, faction, snapshot))
+        await self._send_many(
+            player.send(
                 "match_start",
                 room_id=room.room_id,
                 side=faction,
@@ -232,8 +247,11 @@ class KillZoneServer:
                 battlefield=room.battlefield,
                 snapshot=snapshot,
             )
+            for player, faction, snapshot in snapshots
+        )
         await self.broadcast_room_list()
-        room.task = asyncio.create_task(self.match_loop(room), name=f"match-{room.room_id}")
+        if room.status == "match":
+            room.task = asyncio.create_task(self.match_loop(room), name=f"match-{room.room_id}")
 
     async def match_loop(self, room: Room) -> None:
         tick = float(kz.SIM_DT)
@@ -250,6 +268,7 @@ class KillZoneServer:
                     next_tick += tick
                     updates += 1
                 if now >= next_snapshot:
+                    snapshots = []
                     for player in list(room.players):
                         faction = "player" if player.slot == 0 else "enemy"
                         state = kz.serialize_network_snapshot(room.game, faction)
@@ -258,10 +277,10 @@ class KillZoneServer:
                             faction,
                             room.pending_events,
                         )
-                        await player.send(
-                            "snapshot",
-                            state=state,
-                        )
+                        snapshots.append((player, state))
+                    await self._send_many(
+                        player.send("snapshot", state=state) for player, state in snapshots
+                    )
                     room.pending_events.clear()
                     next_snapshot = now + 0.1
                 winner = kz.network_pvp_winner(room.game)
@@ -281,18 +300,20 @@ class KillZoneServer:
         if room.status == "finished":
             return
         room.status = "finished"
-        for player in list(room.players):
-            faction = "player" if player.slot == 0 else "enemy"
-            await player.send(
+        await self._send_many(
+            player.send(
                 "match_end",
-                result="victory" if faction == room.winner else "defeat",
+                result="victory" if ("player" if player.slot == 0 else "enemy") == room.winner else "defeat",
                 reason=reason,
             )
+            for player in list(room.players)
+        )
         await self.broadcast_room_list()
 
     def command_allowed(self, client: ClientConnection) -> bool:
         now = time.monotonic()
-        client.command_times = [stamp for stamp in client.command_times if now - stamp < 1.0]
+        while client.command_times and now - client.command_times[0] >= 1.0:
+            client.command_times.popleft()
         if len(client.command_times) >= COMMAND_RATE:
             return False
         client.command_times.append(now)
@@ -343,7 +364,7 @@ class KillZoneServer:
                 battlefield=kz.sanitize_network_battlefield(message.get("battlefield")),
             )
             self.rooms[room.room_id] = room
-            await self.join_room(client, room)
+            await self.join_room(client, room, room.password)
         elif message_type == "join_room":
             room = self.rooms.get(str(message.get("room_id", "")).upper())
             if room is None:
@@ -370,7 +391,10 @@ class KillZoneServer:
                 await self.send_error(client, "rate_limit", "Too many commands")
                 return
             faction = "player" if client.slot == 0 else "enemy"
-            accepted, reason = kz.apply_network_command(room.game, faction, message)
+            try:
+                accepted, reason = kz.apply_network_command(room.game, faction, message)
+            except (TypeError, ValueError, OverflowError):
+                accepted, reason = False, "Invalid command payload"
             if not accepted:
                 await client.send("command_rejected", sequence=message.get("sequence"), reason=reason)
         elif message_type == "disconnect":
@@ -379,9 +403,12 @@ class KillZoneServer:
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         client = ClientConnection(reader, writer)
         if len(self.clients) >= MAX_CLIENTS:
-            writer.write(encode_packet({"type": "error", "code": "server_full", "message": "Server full"}))
-            await writer.drain()
-            writer.close()
+            try:
+                await self.send_error(client, "server_full", "Server full")
+            finally:
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(writer.wait_closed(), timeout=SEND_TIMEOUT)
             return
         self.clients.add(client)
         print(f"[connect] {client.peer} ({len(self.clients)} online)", flush=True)
@@ -396,12 +423,14 @@ class KillZoneServer:
         except Exception as exc:
             print(f"[client] {client.peer}: {exc}", flush=True)
         finally:
-            await self.leave_room(client, disconnected=True)
-            self.clients.discard(client)
-            writer.close()
-            with contextlib.suppress(Exception):
-                await writer.wait_closed()
-            print(f"[disconnect] {client.peer} ({len(self.clients)} online)", flush=True)
+            try:
+                await self.leave_room(client, disconnected=True)
+            finally:
+                self.clients.discard(client)
+                writer.close()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(writer.wait_closed(), timeout=SEND_TIMEOUT)
+                print(f"[disconnect] {client.peer} ({len(self.clients)} online)", flush=True)
 
 
 async def main() -> None:

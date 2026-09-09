@@ -8,6 +8,7 @@ keep all socket work off Pygame's render/input thread.
 from __future__ import annotations
 
 import json
+import math
 import queue
 import select
 import socket
@@ -29,30 +30,55 @@ class ProtocolError(RuntimeError):
 
 
 def encode_packet(message: dict[str, Any]) -> bytes:
-    payload = json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if not isinstance(message, dict) or not isinstance(message.get("type"), str):
+        raise ProtocolError("packet must be an object with a string type")
+    try:
+        payload = json.dumps(
+            message, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise ProtocolError("packet must contain valid JSON values") from exc
     if len(payload) > MAX_PACKET_BYTES:
         raise ProtocolError(f"packet exceeds {MAX_PACKET_BYTES} bytes")
     return HEADER.pack(len(payload)) + payload
 
 
+def decode_payload(payload: bytes) -> dict[str, Any]:
+    """Apply the same JSON validation to both desktop and server packets."""
+    def finite_number(value: str) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("non-finite JSON number")
+        return number
+
+    try:
+        message = json.loads(
+            payload.decode("utf-8"), parse_float=finite_number, parse_constant=finite_number
+        )
+    except (UnicodeError, ValueError, RecursionError) as exc:
+        raise ProtocolError("invalid JSON packet") from exc
+    if not isinstance(message, dict) or not isinstance(message.get("type"), str):
+        raise ProtocolError("packet must be an object with a string type")
+    return message
+
+
 def decode_packets(buffer: bytearray) -> list[dict[str, Any]]:
     messages = []
-    while len(buffer) >= HEADER.size:
-        (size,) = HEADER.unpack_from(buffer)
-        if size <= 0 or size > MAX_PACKET_BYTES:
-            raise ProtocolError(f"invalid packet size {size}")
-        frame_end = HEADER.size + size
-        if len(buffer) < frame_end:
-            break
-        payload = bytes(buffer[HEADER.size:frame_end])
-        del buffer[:frame_end]
-        try:
-            message = json.loads(payload.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ProtocolError("invalid JSON packet") from exc
-        if not isinstance(message, dict) or not isinstance(message.get("type"), str):
-            raise ProtocolError("packet must be an object with a string type")
-        messages.append(message)
+    consumed = 0
+    try:
+        while len(buffer) - consumed >= HEADER.size:
+            (size,) = HEADER.unpack_from(buffer, consumed)
+            if size <= 0 or size > MAX_PACKET_BYTES:
+                raise ProtocolError(f"invalid packet size {size}")
+            frame_end = consumed + HEADER.size + size
+            if len(buffer) < frame_end:
+                break
+            payload = bytes(buffer[consumed + HEADER.size:frame_end])
+            consumed = frame_end
+            messages.append(decode_payload(payload))
+    finally:
+        # Compact once per read, including when a later frame is malformed.
+        del buffer[:consumed]
     return messages
 
 
@@ -71,7 +97,7 @@ class NetworkClient:
         self._thread: threading.Thread | None = None
 
     def connect(self, host: str, port: int, player_name: str, timeout: float = 6.0) -> bool:
-        if self.connected or self.connecting:
+        if self.connected or self.connecting or (self._thread and self._thread.is_alive()):
             return False
         while True:
             try:
@@ -113,23 +139,25 @@ class NetworkClient:
         sock = None
         try:
             sock = socket.create_connection((self.host, self.port), timeout=timeout)
+            if self._stop.is_set():
+                return
             sock.setblocking(False)
-            self.connected = True
-            self.connecting = False
-            self.events.put({"type": "network_connected", "host": self.host, "port": self.port})
-            self.outgoing.put(
+            # A command queued during connection must never precede the handshake.
+            pending = bytearray(encode_packet(
                 {
                     "type": "hello",
                     "protocol": PROTOCOL_VERSION,
                     "name": self.player_name,
                     "client": "kill-zone-desktop",
                 }
-            )
+            ))
+            self.connected = True
+            self.connecting = False
+            self.events.put({"type": "network_connected", "host": self.host, "port": self.port})
             incoming = bytearray()
-            pending = bytearray()
             last_ping = time.monotonic()
             while not self._stop.is_set():
-                while True:
+                for _ in range(64):
                     try:
                         pending.extend(encode_packet(self.outgoing.get_nowait()))
                     except queue.Empty:
@@ -155,7 +183,8 @@ class NetworkClient:
                     for message in decode_packets(incoming):
                         self.events.put(message)
         except Exception as exc:
-            self.events.put({"type": "network_error", "message": str(exc)[:240]})
+            if not self._stop.is_set():
+                self.events.put({"type": "network_error", "message": str(exc)[:240]})
         finally:
             self.connecting = False
             was_connected = self.connected

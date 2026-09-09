@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased — engine tools, updates 001–006
+
+- Added a headless simulation CLI with JSON reports, strict versioned scenario
+  settings, and scenario import/export with explicit command-line overrides.
+- Added canonical state fingerprints and complete versioned JSON checkpoint
+  export, including RNG, dynamic model fields, projectiles and temporal tactical
+  memoization. Rebuildable indexes and wall-clock measurements are excluded.
+- Added validated checkpoint restoration with matching continued state hashes
+  across both missions, pending combat, wounds, queued orders and terrain edits.
+  Restored cells share one world revision tracker and indexes reference the
+  restored units; released casualty occupancy and temporal caches are preserved.
+- Checkpoint loading rejects incompatible versions/source/runtime, malformed
+  model and tactical records, unknown attributes, duplicate IDs, fractional
+  indexes and incorrectly typed dynamic combat fields before returning a world.
+- Rejected duplicate JSON keys, non-finite numbers, oversized or excessively
+  nested files, invalid byte limits before file reads, and invalid terrain
+  revisions before state encoding.
+- Recorded exactly 100 acceptance-based updates in ROADMAP.md, with separate
+  bug-fix, measured performance and validation passes after each five updates.
+- Filtered factions before casualty checks in repeated living-unit queries.
+  Seven alternating 900-tick, seed-42 Hard assault runs reduced median runtime
+  from 0.597 to 0.563 seconds (5.6%) with identical full state fingerprints.
+
+## Unreleased — engine architecture
+
+- Replaced compressed runtime payloads and source concatenation with ordinary
+  `engine` modules. Simulation systems, state models, game rules, networking,
+  rendering, audio, and controls now have explicit boundaries. The simulation
+  runs without Pygame; the historical `kill_zone` API remains a lazy facade.
+- Centralized the simulation phase order. Paused, finished, replica, and
+  zero-duration worlds no longer mutate; invalid timesteps are rejected.
+- Added a reusable fixed-step clock with bounded catch-up, speed scaling,
+  interpolation fraction, and dropped-time accounting. Slow rendered frames
+  no longer discard all simulation time beyond 50 ms.
+- Added stable spatial queries for projectile broadphase, batched reaction-fire
+  faction scans, cheaper geometry, and range checks before visibility work.
+- Made terrain revisions local to each world, and fixed stale visibility after
+  a door changes or a soldier becomes a casualty.
+- Added explicit `NetworkGame` rules, removing instance method patches and
+  fixing sustained PvP updates accidentally calling campaign objective logic.
+  Commands are validated before mutation, and replicated terrain invalidates
+  only the affected world's caches.
+- Fixed protected room creation, client handshake/reconnect races, malformed
+  packets, failed-peer broadcasts, and disconnect cleanup. Slow writes are
+  bounded; fully independent connection writer queues remain on the roadmap.
+- Release builders copy the same modules tested in development. Historical
+  tests are plain Python, and validation now covers engine contracts, clocks,
+  spatial queries, visibility regressions, benchmark arguments, and both
+  Assault and Defense stress matrices.
+- Added machine-readable benchmark results and a prioritized feature roadmap.
+  Five alternating 900-tick runs per version under Python 3.12 on the same
+  machine reduced median mean update time from 1.886 to 1.746 ms (7.4%) and
+  median p95 from 3.044 to 2.838 ms (6.8%). Worst-tick time was unchanged;
+  initial forces and final living/effective counts and HP totals matched.
+
 ## Unreleased — Combat Feel 2.1
 
 ### Firefights

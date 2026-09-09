@@ -7,6 +7,15 @@ import zipfile
 from pathlib import Path
 
 
+def copy_engine(root: Path, output: Path) -> None:
+    """Ship the exact modules tested in development, without generated code."""
+    shutil.copy2(root / "kill_zone.py", output / "kill_zone.py")
+    shutil.copytree(root / "engine", output / "engine", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
+    (output / "src").mkdir(exist_ok=True)
+    for name in ("__init__.py", "multiplayer_net.py"):
+        shutil.copy2(root / "src" / name, output / "src" / name)
+
+
 def recreate_generated_directory(output: Path, marker_name: str, marker_text: str) -> None:
     """Recreate *output* only when it is empty or carries our exact marker."""
     if output.exists() and any(output.iterdir()):

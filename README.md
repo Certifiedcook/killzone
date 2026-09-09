@@ -1,75 +1,50 @@
 # Kill Zone
 
 Kill Zone is a top-down real-time infantry tactics game about suppression,
-cover, maneuver, morale, casualty handling, field engineering, and small-unit
-command. It runs on Python and Pygame and includes single-player Assault and
-Defense operations plus friends-only two-player PvP.
+cover, maneuver, morale, casualties, engineering, and small-unit command.
+It includes single-player Assault and Defense operations and two-player PvP.
+Python runs the simulation; Pygame provides the desktop interface.
 
-## Current systems
+The game now uses an ordinary Python engine package. Simulation, networking,
+and frontend code have separate modules, and development and release builds
+use the same source files. See [ARCHITECTURE.md](ARCHITECTURE.md) for the
+boundaries and remaining limitations, and [ROADMAP.md](ROADMAP.md) for proposed
+additions. [ENGINE_TOOLS.md](ENGINE_TOOLS.md) covers headless simulation, validated
+scenario import/export, state fingerprints and the checkpoint save/resume API.
 
-### Combat 2.0
+## Play
 
-- Small-arms rounds physically cross the map and can hit terrain, intended
-  targets, or friendly and unintended soldiers.
-- Near misses suppress units along the round's actual trajectory.
-- Walls, buildings, timber, windows, woods, bunkers, doors, and sandbags use
-  material resistance, penetration loss, and persistent damage.
-- Head, torso, arm, and leg wounds affect disorientation, bleeding, accuracy,
-  reload speed, stamina, and mobility. Medics reduce localized trauma.
-- Movement and firing increase exposure; reacquisition and post-movement
-  settling affect weapon response.
-- Weapons fire in role-specific bursts with recoil recovery and close-range
-  lethality; soldiers flinch, duck, or go prone under near misses.
-- Deliberate fire checks friendly firing lanes before shooting, while physical
-  rounds can still cause accidental friendly fire after they are airborne.
-- Every mobile soldier receives a deterministic full name and callsign from a
-  1,600-combination identity pool.
-
-### Operations and AI
-
-- Assault battles use four staged objectives, prepared defensive lines,
-  reserves, local collapse, surrender, and a rear command post.
-- Defense battles reverse deployment and ask the player to hold three timed
-  waves while protecting the command post.
-- Enemy attack plans separate support-by-fire, maneuver, assault, breach, and
-  sustainment elements. Defensive plans use covered lanes, screens,
-  repositioning, reserves, and favorable counterattacks.
-- AI target, movement, deployment, smoke, and squad-plan commitments resist
-  order thrashing; formations reserve distinct arrival positions.
-- Squad doctrines—Cautious, Balanced, and Aggressive—change movement and
-  autonomy policy.
-- Engineers can build sandbags, wire, trenches, MG emplacements, field guns,
-  and artillery through an RTS-style blueprint workflow.
-
-### Presentation and multiplayer
-
-- Procedural weapon reports, distant tails, explosions, ambience, weather,
-  terrain detail, tracers, impacts, unit-state accents, and tactical cues are
-  generated locally. Optional documented audio samples are used when present.
-- Incoming/outgoing fire, material impacts, near-miss cracks, protective
-  reactions, order delays, and blocked friendly lanes receive distinct cues.
-- Camera focus eases to the selected squad; camera shake and edge scrolling
-  have separate persistent settings.
-- Multiplayer uses an authoritative dedicated server: simulation, fog of war,
-  combat, construction, and command ownership are validated server-side.
-- The public browser defaults to `88.99.98.156:25503` and supports room
-  creation, Blue/Red slots, ready state, symmetric forces, and match results.
-- PvP is a friends-only alpha: TCP transport is unencrypted and there are no
-  accounts, reconnects, matchmaking, chat, or anti-abuse systems yet.
-
-## Quick start
-
-On Windows, double-click `launch_kill_zone.bat`.
-
-Manual launch:
+On Windows, double-click `launch_kill_zone.bat`. For a manual setup, use Python
+3.12 or later:
 
 ```bat
-python -m pip install -r requirements.txt
-python kill_zone.py
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python kill_zone.py
 ```
 
 The launcher prefers `.venv`, falls back to `py` or `python`, and installs the
-pinned Pygame dependency if necessary.
+pinned Pygame dependency when needed. Optional media is unnecessary for offline
+play; sources and licensing are listed in [ASSET_SOURCES.md](ASSET_SOURCES.md).
+
+## Current gameplay
+
+- Physical small-arms rounds, penetration, destructible cover, friendly fire,
+  and suppression along near-miss trajectories.
+- Localized wounds, bleeding, medics, stamina, weapon preparation, recoil,
+  bursts, and reactions to incoming fire.
+- Assault objectives, defensive lines, reserves, morale collapse, and timed
+  Defense waves with support, maneuver, assault, and sustainment roles.
+- Squad doctrines, formations, fire discipline, engineer construction,
+  emplacements, mortars, and artillery.
+- Seeded soldier identities, procedural audio and weather effects, tactical
+  cues, camera controls, and persistent presentation settings.
+
+PvP uses an authoritative dedicated server with command ownership, input
+validation, fog of war, symmetric forces, password-protected rooms, readiness,
+and match results. It remains a friends-only alpha: TCP is unencrypted, and
+accounts, matchmaking, reconnect/resume, and chat are not implemented. The
+configured browser default is `88.99.98.156:25503`; the address is editable.
 
 ## Important controls
 
@@ -85,97 +60,73 @@ pinned Pygame dependency if necessary.
 | `F1` | Open the in-battle field manual |
 | `F2` | Begin a coordinated assault order |
 | `F9` | Toggle the performance profiler |
-| `F11` | Toggle the most recently selected fullscreen mode |
+| `F11` | Toggle the selected fullscreen mode |
 | `F12` | Commit held reserves |
 | `Home` | Focus the current selection |
 | Arrow keys / edge scroll / middle drag | Pan the camera |
 | Mouse wheel | Zoom |
 | `Escape` | Cancel target mode, then open the pause menu |
 
-The main-menu Help page and in-battle `F1` manual document every command-bar
-button, fire mode, autonomy setting, and targeting workflow.
+The Help page and `F1` manual cover the remaining commands and targeting modes.
 
 ## Validation
 
-Run the complete suite:
-
 ```bat
-validate.bat
+.venv\Scripts\python validate.py
+.venv\Scripts\python validate.py --stress
 ```
 
-Include deterministic multi-seed stress battles:
+`validate.bat` accepts the same options. The suite covers engine isolation,
+fixed-step scheduling, spatial queries, performance behavior, benchmark
+correctness, historical simulation regressions, current gameplay, multiplayer
+sockets, presentation, and frontend wiring. Real Pygame rendering runs when
+Pygame is installed. `--stress` adds both Assault and Defense battles across
+multiple seeds and difficulties.
+
+Run the fixed-step and pathfinding benchmark separately:
 
 ```bat
-validate.bat --stress
+.venv\Scripts\python benchmark.py
 ```
 
-The suite contains:
+Use the same interpreter, arguments, seeds, and mission when comparing results.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks.
 
-- 71 historical deterministic simulation tests;
-- 37 current maintenance and operations regressions;
-- real two-client authoritative multiplayer integration;
-- presentation/audio, Combat 2.0, and Combat Feel 2.1 tests;
-- dependency-free UI smoke coverage;
-- real headless Pygame rendering;
-- configurable Assault/Defense stress matrices.
-
-Run the repeatable fixed-tick benchmark separately:
+## Packaging and dedicated server
 
 ```bat
-python benchmark.py
+.venv\Scripts\python build_release.py --zip
+.venv\Scripts\python build_multiplayer_server.py --zip
 ```
 
-## Packaging
+Both builders copy the tested engine modules; they do not assemble a second
+runtime. Generated directories and archives belong under ignored `build/`.
+Builders refuse to replace a non-empty directory without their generated
+marker. Desktop bundles contain Python source and still require the Python
+runtime and listed dependencies.
 
-Build the standalone game directory and ZIP:
+For a hosted server, extract the contents of `dedicated_server.zip` into
+`/home/container`, with `app.py` at `/home/container/app.py`. Use Python 3.12+,
+install `requirements.txt`, and assign TCP port `25503`. See the generated
+`SERVER_SETUP.txt` for launch details.
 
-```bat
-python build_release.py --zip
-```
-
-Build the upload-ready dedicated-server directory and ZIP:
-
-```bat
-python build_multiplayer_server.py --zip
-```
-
-Generated output belongs under the ignored `build/` directory. The builders
-refuse to replace non-empty directories unless their generated marker is
-present.
-
-For the hosted server, extract the contents of `dedicated_server.zip` directly
-into `/home/container` so `app.py` is `/home/container/app.py`. Use Python
-3.12+, set the requirements file to `requirements.txt`, and assign TCP port
-`25503`.
-
-## Repository layout
+## Source layout
 
 | Path | Purpose |
 | --- | --- |
-| `kill_zone.py` | Thin development entry point |
-| `src/legacy_game.py.gz` | Compact historical runtime baseline |
-| `src/legacy_performance.py.gz` | Historical performance layer |
-| `src/maintenance_extension.py` | Current controls, operations, engineering, AI, and fixes |
-| `src/multiplayer_extension.py` | Authoritative PvP state and desktop multiplayer UI |
-| `src/presentation_extension.py` | Audio and visual presentation layer |
-| `src/combat2_extension.py` | Projectiles, wounds, identities, and squad tactics |
-| `src/combat_polish_extension.py` | Weapon rhythm, lane safety, reactions, AI commitment, and camera/audio polish |
-| `src/source_loader.py` | Single runtime/test assembly path |
-| `src/release_tools.py` | Shared safe release-directory and ZIP helpers |
-| `multiplayer_server/` | Dedicated-server process and requirements |
-| `*_test.py` | Focused, smoke, integration, and historical test launchers |
-| `build_release.py` | Standalone desktop distribution builder |
-| `build_multiplayer_server.py` | Dedicated-server bundle builder |
+| `kill_zone.py` | Desktop entry point and lazy compatibility facade |
+| `engine/simulation.py` | Headless `RealTimeGame` with static system composition |
+| `engine/systems/` | Combat, lifecycle, movement, operations, tactics, and world systems |
+| `engine/models.py`, `engine/definitions.py`, `engine/rules.py` | State, data tables, and shared rules |
+| `engine/clock.py`, `engine/spatial.py` | Fixed-step scheduling and spatial queries |
+| `engine/revisions.py` | Per-world terrain revision state |
+| `engine/networking.py` | `NetworkGame`, commands, snapshots, and PvP rules |
+| `engine/frontend/` | Pygame application, controls, rendering, audio, and support |
+| `src/multiplayer_net.py` | Framed JSON transport and background desktop client |
+| `multiplayer_server/` | Authoritative service process |
+| `src/release_tools.py` | Shared packaging helpers |
+| `*_test.py`, `validate.py`, `benchmark.py` | Validation and measurement |
 
-The compressed legacy baseline remains stable. New work should stay in normal,
-reviewable Python, preserve the public names used by tests, and pass
-`validate.py --stress` after simulation, AI, pathfinding, combat, terrain, or
-rendering changes. See `CONTRIBUTING.md` for the development contract and
-`CHANGELOG.md` for historical details.
-
-## Optional assets
-
-Kill Zone remains playable offline without downloaded media. Optional CC0
-audio and visual assets, their sources, and licensing notes are documented in
-`ASSET_SOURCES.md`. Runtime downloads live under ignored `assets/audio/` and
-`assets/fx/` directories.
+The compressed runtime payloads and source-assembly loader have been removed.
+Edit engine modules directly. Historical changes remain in
+[CHANGELOG.md](CHANGELOG.md).
