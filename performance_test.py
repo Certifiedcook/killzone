@@ -84,6 +84,19 @@ class GeometryTests(unittest.TestCase):
 
 
 class AutomaticTargetTests(unittest.TestCase):
+    def test_living_filter_tracks_casualties_and_replacements_in_order(self):
+        game, first, enemy = clear_battle()
+        second = game.add_unit("player", "Medic", 4, 4)
+        self.assertEqual(game.living("player"), [first, second])
+        first.casualty = "dead"
+        enemy.casualty = "surrendered"
+        self.assertEqual(game.living(), [second])
+        self.assertEqual(game.living("enemy"), [])
+        game.units = [enemy, second, first]
+        first.casualty = "incapacitated"
+        self.assertEqual(game.living("player"), [second, first])
+        self.assertEqual(game.living("unknown"), [])
+
     def test_range_rejection_skips_los_and_boundary_remains_inclusive(self):
         shooter = SimpleNamespace(
             pos=(0, 0), faction="player", target_priority="nearest", weapon={"range": 5}

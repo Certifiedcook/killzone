@@ -1,52 +1,111 @@
-# Proposed additions
+# Engine development roadmap
 
-The current foundation is delivered: ordinary engine modules, a headless
-simulation, explicit PvP rules, bounded desktop stepping, spatial collision
-queries, per-world cache invalidation, and focused regression coverage.
-[ARCHITECTURE.md](ARCHITECTURE.md) describes what exists and its limits.
+Exactly 100 proposed updates are tracked below. A checked item has been implemented
+and its stated acceptance checked; unchecked items remain proposals. Delivery is
+sequential in this order. Existing architecture work is described in ARCHITECTURE.md.
 
-The items below are proposals, not implemented features or release promises.
+After every five updates, perform a separate bug-fix and measured performance pass,
+run the full validation and both mission stress matrices, and publish a reviewable
+checkpoint. These maintenance passes do not count toward the 100 updates. Preserve
+determinism, headless operation and multiplayer visibility boundaries throughout.
 
-## First priorities
-
-1. **Deterministic replay and save/resume.** Record versioned initial settings,
-   seed, timestep, and accepted commands; serialize complete state for saves,
-   including RNG state, pending actions, projectiles, and timers. Verify that a
-   resumed run and an uninterrupted run reach matching state hashes. This
-   gives players resumable battles and developers reproducible bug reports.
-
-2. **Network output queues and draw results.** Give each connection a bounded
-   writer worker so a slow reader cannot stall simulation. Coalesce replaceable
-   snapshots while preserving ordered gameplay events. Carry a draw outcome
-   through server results and the desktop UI instead of labeling both sides
-   defeated. Test slow peers, simultaneous elimination, and cleanup.
-
-3. **Scenario and weapon schemas.** Move configurable scenario, roster, weapon,
-   and objective data behind versioned schemas with clear validation errors.
-   Preserve current defaults and provide migration checks before allowing
-   external content. This creates a stable basis for modding and an editor.
-
-## Next extensions
-
-4. **Smoother, resumable multiplayer.** Add snapshot sequence numbers,
-   interpolation, delta encoding with full-state resynchronization, and
-   acknowledged commands. Reconnect should restore the same player slot with a
-   bounded grace period and authenticated resume token. Measure bandwidth and
-   recovery under delay, interruption, and stale messages.
-
-5. **Rendering culling and profiling.** Measure frame-time distributions and
-   individual terrain, unit, effect, and UI costs. Cull off-screen work and
-   invalidate cached drawing only when relevant state changes. Compare the
-   same seeded battles at multiple resolutions and unit counts; retain visual
-   smoke coverage and report regressions as well as gains.
-
-6. **Scenario editor.** Build on the validated data schemas: terrain painting,
-   spawn zones, objectives, roster selection, and an immediate playtest loop.
-   Start with import/export and undo before adding campaign tools. Edited
-   scenarios should run through the same simulation and stress validation.
-
-7. **Smaller engine and frontend APIs.** Replace retained private compatibility
-   chains gradually, split large rule/data and UI modules by responsibility,
-   and document stable system interfaces. Preserve compatibility at the facade
-   while new callers use explicit modules; evaluate ECS-style storage only if
-   profiling or new game requirements justify it.
+- [x] **001. Headless simulation command** — Run a seeded battle through python -S -m engine simulate and produce a machine-readable JSON result without importing Pygame.
+- [x] **002. Validated scenario definitions** — A versioned JSON scenario validates seed, difficulty, operation settings and roster with field-specific errors and creates the same initial world as the equivalent constructor.
+- [x] **003. Scenario import and export commands** — Export a scenario, import it through the CLI, and reproduce its settings and initial forces; malformed files fail before simulation starts.
+- [x] **004. Deterministic state fingerprints** — Matching seeds and command sequences produce matching canonical state hashes, while changing RNG state, terrain, pending orders or projectiles changes the hash.
+- [x] **005. Versioned battle checkpoint export** — Export the complete simulation state as non-executable versioned JSON, including RNG, dynamic model fields, timers, pending effects and temporal tactical memoization, without serializing rebuildable lookup/spatial caches or frontend objects.
+- [ ] **006. Battle checkpoint restoration** — A restored battle and its uninterrupted counterpart reach identical state fingerprints after further simulation, including pending combat and terrain mutations.
+- [ ] **007. Command-line save and resume** — A CLI run can save a checkpoint and a second process resume it for additional ticks with the same final fingerprint as one uninterrupted run.
+- [ ] **008. Atomic rotating autosave storage** — An interrupted save leaves the last valid checkpoint intact and bounded rotation retains the configured number of independently loadable saves.
+- [ ] **009. Single-player quicksave and quickload controls** — The desktop can save and restore an active local battle through explicit controls and reports an invalid save without losing the current battle.
+- [ ] **010. Configurable timed battle autosaves** — Enabled local autosaves occur at configured simulation-time intervals, survive pause and speed changes correctly, and retain a recoverable prior checkpoint.
+- [ ] **011. Accepted command journal** — A headless command gateway records successful commands with their simulation tick and rejects invalid commands without changing either state or the accepted-command journal.
+- [ ] **012. Deterministic replay execution** — Replaying a versioned scenario and accepted-command journal reproduces the recorded terminal state fingerprint and reports an incompatible replay version clearly.
+- [ ] **013. Replay verification command** — The CLI verifies replay checkpoints and reports the first divergent tick and expected versus actual state fingerprint with a failing exit status.
+- [ ] **014. Local desktop command recording** — Local tactical actions pass through the shared command gateway so a recorded desktop battle can reproduce its simulation through the headless replay runner.
+- [ ] **015. Replay export from the desktop** — A player can export the current local battle replay and load it into the replay verifier without including private UI settings or machine paths.
+- [ ] **016. Opt-in simulation phase profiling** — An enabled profiler reports call counts and timings for named simulation phases, while disabling it leaves deterministic simulation state unchanged.
+- [ ] **017. Profiling report command** — The headless CLI writes a structured phase profile with totals, per-phase mean and maximum duration, and workload settings sufficient to repeat the measurement.
+- [ ] **018. Repeatable benchmark matrices** — One benchmark invocation compares a configured set of seeds, missions and difficulties using warm-up and repeated measurements and exports every workload and summary.
+- [ ] **019. Structured engine invariant diagnostics** — A read-only diagnostics API identifies invalid coordinates, duplicate unit IDs, missing unit references and non-finite combat state with precise object and field locations.
+- [ ] **020. Authored deterministic regression scenarios** — A fixture runner executes small authored cover, medical, movement and ballistic scenarios and reports scenario-specific invariant or fingerprint failures.
+- [ ] **021. Typed simulation events** — Combat, casualty and objective events expose a versioned typed payload with stable IDs, timestamps and perspective visibility rather than requiring consumers to parse display text.
+- [ ] **022. Scoped event subscriptions** — Independent subscribers can observe typed events, unsubscribe cleanly and fail without corrupting simulation or delivering events outside their faction visibility.
+- [ ] **023. Clean reusable simulation sessions** — Resetting an engine session to a scenario releases old subscriptions, caches and pending commands and reproduces a freshly constructed world.
+- [ ] **024. Structured headless error reports** — CLI tools optionally return stable JSON error codes and field details for invalid content, unsupported versions and file failures with nonzero exit status.
+- [ ] **025. Seeded soak runner with reproducers** — A bounded soak runner varies supported scenarios, checks invariants at intervals and writes a scenario, command journal and checkpoint when a failure occurs.
+- [ ] **026. Attack-move orders** — A unit following an attack-move order stops to engage a visible enemy in range and resumes its original destination when that enemy becomes unavailable.
+- [ ] **027. Looping patrol routes** — A patrol visits its ordered waypoints repeatedly with the configured dwell time and stops repeating immediately when replaced by another order.
+- [ ] **028. Escort an allied unit** — An escort follows a moving allied unit within a configured distance without sharing its occupied tile and ends the assignment when the ally leaves the battle.
+- [ ] **029. Defend an assigned area** — A unit defending a position may engage nearby enemies but returns to that position instead of pursuing them beyond the configured defense radius.
+- [ ] **030. Controlled fighting withdrawal** — A withdrawal order moves alternating squad elements toward the chosen fallback point while the stationary element provides overwatch until both elements arrive.
+- [ ] **031. Engagement distance policy** — A unit with an engagement-distance limit holds automatic and reaction fire against visible enemies outside that limit while an explicit manual fire order can override it.
+- [ ] **032. Ammunition conservation policy** — A configured ammunition reserve floor stops discretionary automatic and suppressive fire before the reserve is consumed while a manual fire order remains available.
+- [ ] **033. Coordinated opening volley** — A volley order releases the participating ready soldiers on the same simulation tick after all are ready or the configured preparation deadline expires.
+- [ ] **034. Suppressive fire ammunition budgets** — A suppressive fire mission with a specified round budget stops after that many actual discharges even when the weapon reloads during the mission.
+- [ ] **035. Protected fire exclusion areas** — A faction-owned circular fire exclusion area prevents its units from initiating direct fire or explosive attacks whose chosen impact point lies inside the area.
+- [ ] **036. Medic triage by urgency** — An autonomous medic prioritizes a reachable incapacitated ally who is bleeding out over a nearer lightly wounded ally when both can be treated.
+- [ ] **037. Exclusive casualty treatment assignments** — Two autonomous medics select different untreated casualties when possible and release a treatment reservation when its assigned medic becomes incapacitated or receives another order.
+- [ ] **038. Casualty evacuation orders** — An evacuation order makes an eligible soldier reach an incapacitated ally, carry that ally to the chosen evacuation point, and put the ally down without reviving them.
+- [ ] **039. Automatic ammunition rendezvous** — An ammunition-starved soldier assigned resupply meets a nearby compatible donor and receives one magazine without taking the donor below its configured reserve.
+- [ ] **040. Finite battlefield supply caches** — A soldier at a friendly supply cache completes a timed resupply action that transfers compatible magazines and reduces the cache inventory by exactly the amount transferred.
+- [ ] **041. Routes that avoid detected mines** — Safe movement routes detour around mines revealed to the moving faction when an alternative exists while an unrevealed mine does not influence route selection.
+- [ ] **042. Routes that avoid active fires** — Safe movement selects a traversable fire-free detour over a burning shortcut and allows that shortcut again after the fire expires.
+- [ ] **043. Formations oriented to movement direction** — A line formation remains perpendicular to its travel direction and a column remains parallel when otherwise equivalent group orders are issued northward and eastward.
+- [ ] **044. Squad movement pace control** — An enabled cohesion pace policy pauses the advancing portion of a squad when its slowest active member exceeds the configured separation and resumes movement after that member catches up.
+- [ ] **045. Rest stops during long movement orders** — An enabled endurance policy pauses a low-stamina unit at reachable cover until its stamina recovers to the configured threshold and then resumes the same destination.
+- [ ] **046. AI searches around lost contacts** — After reaching a last-known enemy position without reacquiring that enemy, an AI search visits a bounded deterministic sequence of nearby positions based only on its stored contact information.
+- [ ] **047. AI flank selection using terrain** — When otherwise comparable flank candidates lie on an exposed route and a protected traversable route, the squad planner selects the protected route with deterministic tie breaking.
+- [ ] **048. AI distributes fire across threats** — When a squad faces two equally suitable visible targets, its assignment policy distributes shooters across those targets instead of assigning every shooter to the first target.
+- [ ] **049. Staggered support-weapon reloads** — Two support weapons with ammunition remaining stagger discretionary reloads so at least one stays ready, while empty weapons and emergency reload orders bypass the delay.
+- [ ] **050. AI explosive attacks account for nearby allies** — An AI soldier declines a high-explosive grenade throw when the predicted blast contains an ally and permits the same throw once that ally leaves the danger radius.
+- [ ] **051. Negotiate optional multiplayer protocol capabilities** — A loopback handshake enables only capabilities supported by both peers while a client without a capabilities field still receives the existing full-snapshot protocol.
+- [ ] **052. Decouple simulation from bounded client writer queues** — With one stalled socket, a loopback match continues advancing and delivering snapshots to its healthy peer while reliable events remain ordered and queued bytes stay within the configured bound.
+- [ ] **053. Acknowledge commands and prevent duplicate execution** — Sending the same accepted command sequence twice returns an acknowledgement for each request but changes authoritative game state only once.
+- [ ] **054. Sequence snapshots and reject stale updates** — A replica receiving snapshot sequences 1, 3, and 2 retains sequence 3 and never rolls its game state back to sequence 2.
+- [ ] **055. Send snapshot deltas with full-state recovery** — Applying a full baseline followed by its delta reconstructs the expected snapshot exactly, while a delta referencing an unknown baseline requests a full snapshot without mutating the replica.
+- [ ] **056. Buffer network snapshots for position interpolation** — Sampling halfway between two buffered snapshots interpolates a continuously visible unit to its midpoint without modifying either stored authoritative snapshot or carrying a newly hidden unit into the displayed state.
+- [ ] **057. Resume disconnected player slots within a grace period** — A valid room-scoped resume token restores the same player slot and a fresh snapshot before the grace deadline, while expired or incorrect tokens cannot claim that slot.
+- [ ] **058. Start a rematch without recreating the lobby** — After both current players request a rematch, the same room starts a fresh game with reset readiness, command sequences, and result state.
+- [ ] **059. Allow owners to revise lobby battle settings** — Only the current lobby owner can change the seed, battlefield, or roster, and every accepted change clears both players' readiness before another match can start.
+- [ ] **060. Support consensual lobby side swaps** — A side-swap request changes the two unique player slots only after the other player accepts and then clears both readiness flags.
+- [ ] **061. Expose connection latency and detect unanswered heartbeats** — A controlled heartbeat test emits the measured round-trip latency and produces a connection-loss event when the configured unanswered-heartbeat deadline expires.
+- [ ] **062. Rate-limit lobby and discovery messages** — A client flooding room-list or readiness requests receives a bounded rate-limit response while another client can still join a room and an active match continues ticking.
+- [ ] **063. Validate configurable dedicated-server limits** — The server accepts valid configured client, room, message-rate, and timeout limits and rejects invalid values with a field-specific startup error before opening its listening socket.
+- [ ] **064. Provide local server health and traffic metrics** — After scripted loopback traffic, a read-only metrics snapshot reports the expected connection count, packet and byte totals, queue depths, and match tick delay without including room passwords or resume tokens.
+- [ ] **065. Shut the dedicated server down gracefully** — Invoking server shutdown stops new connections, notifies existing peers, and completes within a configured deadline with no live match tasks or client writer tasks remaining.
+- [ ] **066. Represent simultaneous elimination as a draw** — When both forces are eliminated in the same authoritative update, both clients receive a draw result and display a neutral outcome rather than victory or defeat.
+- [ ] **067. Add an editable terrain document independent of the running game** — A valid terrain edit updates only the selected cells in an editor document, while an invalid terrain or coordinate rejects the entire edit and leaves the source game unchanged.
+- [ ] **068. Add transaction-based editor undo and redo** — A multi-cell edit can be undone and redone as one operation with exact terrain and metadata restoration, and a new edit after undo clears the abandoned redo branch.
+- [ ] **069. Add contiguous terrain flood filling** — Flood fill replaces exactly the edge-connected region sharing the selected terrain, respects different-terrain boundaries, and records the change as one undoable operation.
+- [ ] **070. Mirror authored maps and placement metadata** — Applying a horizontal or vertical mirror twice restores all terrain cells, directional metadata, spawn zones, and objective positions to their original values.
+- [ ] **071. Diagnose invalid scenario spawn zones** — Spawn-zone validation reports precise coordinates for out-of-bounds tiles, impassable placements, empty zones, and conflicting opposite-side zones in an authored map fixture.
+- [ ] **072. Check authored routes from spawns to objectives** — A scenario with a sealed objective reports the unreachable spawn-objective pair and becomes valid when a traversable gap is opened in the blocking terrain.
+- [ ] **073. Playtest an authored map without altering its editor state** — Starting and advancing a playtest uses the authored terrain and placements while leaving the editor document and its undo history unchanged.
+- [ ] **074. Compare revisions of an authored map** — Comparing two editor documents reports the exact added, removed, and changed terrain or placement coordinates and returns an empty difference for identical documents.
+- [ ] **075. Place reusable fortification stamps** — A predefined trench, wire, and cover stamp places its complete footprint as one undoable operation, while a footprint crossing the map boundary is rejected without a partial placement.
+- [ ] **076. Searchable friendly roster inspector** — The roster panel filters all friendly troops and emplacements by name or role, and activating a result selects and centers that unit even when it began off screen.
+- [ ] **077. Independent combat, interface, and ambience audio mixer** — Setting combat volume to zero leaves interface and ambience sounds audible, and the master and three category volume settings survive an application restart.
+- [ ] **078. Accessible faction themes with shape identification** — Choosing a color-vision-friendly or high-contrast theme gives friendly and observed enemy markers distinct shapes and colors on the battlefield, with the chosen theme retained after restart.
+- [ ] **079. Scrollable and filterable battlefield event history** — The history panel retains the latest 100 player-observed events, filters them by category, and centers the camera when a located entry is activated.
+- [ ] **080. Interactive battlefield minimap** — The minimap displays terrain, friendly units, currently visible enemies, and the current viewport, and clicking a map position centers the main camera there without revealing hidden enemies.
+- [ ] **081. Tactical distance and bearing ruler** — Selecting two battlefield positions in ruler mode draws a persistent measurement with Euclidean distance in tiles and compass bearing without issuing an order.
+- [ ] **082. Named camera bookmarks** — A player can save three named camera position and zoom bookmarks during a battle and recall each after moving the camera elsewhere.
+- [ ] **083. Follow selected troops camera mode** — Enabling follow mode keeps the center of the selected living troops in view as they move, and manual camera movement immediately releases the follow lock.
+- [ ] **084. Back and forward selection history** — After selecting three distinct friendly groups, selection-back and selection-forward restore the earlier groups in order while excluding units that no longer exist.
+- [ ] **085. Overlapping friendly unit picker** — When multiple friendly unit markers overlap, the picker lists their names and roles and lets the player select any listed unit without moving another unit first.
+- [ ] **086. Local tactical map notes** — The player can add, rename, and delete labeled map pins that remain attached to world coordinates while panning and zooming without changing simulation state.
+- [ ] **087. Single-player pending order queue editor** — For a selected friendly unit in a local battle, the queue panel can remove or reorder an unexecuted queued order while leaving its currently executing order intact.
+- [ ] **088. Searchable tactical command palette** — Typing a command name in the palette filters available tactical actions and activating a result performs the same action or displays the same disabled reason as its command-bar control.
+- [ ] **089. Editable keyboard bindings with conflict detection** — The controls screen can rebind a tactical action, reject a conflicting key combination with an explanation, restore defaults, and retain accepted bindings after restart.
+- [ ] **090. Keyboard navigation for menus and settings** — Tab and Shift-Tab move a visible focus indicator through enabled main-menu and settings controls, and Enter activates the focused control without requiring a mouse.
+- [ ] **091. Optional directional combat sound captions** — An audible player-observed gunshot or explosion produces a timed text caption with an approximate direction when captions are enabled, including when audio is muted, without exposing unobserved events.
+- [ ] **092. Reduced flash and weather effects preset** — Enabling reduced effects removes muzzle flashes, explosion flashes, and weather particles while keeping troops, order markers, and combat status information visible and leaving simulation outcomes unchanged.
+- [ ] **093. Large high-contrast battlefield cursor** — The saved large-cursor option renders a cursor at twice the default size with a contrasting outline, and its hotspot still selects the correct map tile in windowed and fullscreen modes.
+- [ ] **094. Optional pause when a local battle loses focus** — With focus-loss pause enabled, switching away from a local battle pauses it and shows a paused indicator on return until the player explicitly resumes.
+- [ ] **095. Battlefield screenshot capture with optional HUD** — A capture control saves a uniquely named PNG of the current battlefield view with the chosen HUD visibility and reports its path without changing camera position or simulation state.
+- [ ] **096. Battlefield overlay layer controls** — The layer panel independently toggles planned-order lines, contact annotations, and unit-status badges, retaining those choices while preserving each layer's existing visibility restrictions.
+- [ ] **097. Interactive terrain and symbol legend** — Opening the legend shows every terrain type and tactical marker style with its name and meaning, and selecting a terrain entry displays its existing movement, cover, and concealment values.
+- [ ] **098. Role and weapon field encyclopedia** — The field encyclopedia lets the player select any deployable role and inspect its weapon, ammunition capacity, effective range, and role-specific actions using the live game definitions.
+- [ ] **099. Objective navigator with camera focus** — The objective navigator lists the current mission's objectives and progress, and activating an objective centers and briefly highlights its battlefield position without changing the active selection.
+- [ ] **100. Squad readiness dashboard** — The readiness dashboard summarizes each friendly squad's combat-effective count, ammunition, stamina, and suppression, and activating a warning selects that squad's affected troops.

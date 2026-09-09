@@ -32,6 +32,9 @@ def main():
 
     run("self_test.py")
     run("engine_test.py")
+    run("engine_cli_test.py")
+    run("scenario_test.py")
+    run("state_test.py")
     run("clock_test.py")
     run("spatial_test.py")
     run("performance_test.py")

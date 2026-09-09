@@ -1231,10 +1231,12 @@ class WorldSystem:
         return u
 
     def living(self, faction=None):
+        if faction is None:
+            return [u for u in self.units if u.alive]
         return [
             u
             for u in self.units
-            if u.alive and (faction is None or u.faction == faction)
+            if u.faction == faction and u.alive
         ]
 
     def unit_at(self, x, y, include_incap=True):

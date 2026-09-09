@@ -32,7 +32,11 @@ SUPPORT_FILES = (
     "spatial_test.py",
     "clock_test.py",
     "engine_test.py",
+    "engine_cli_test.py",
+    "scenario_test.py",
+    "state_test.py",
     "ARCHITECTURE.md",
+    "ENGINE_TOOLS.md",
     "ROADMAP.md",
 )
 

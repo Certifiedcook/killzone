@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — engine tools, updates 001–005
+
+- Added a headless simulation CLI with JSON reports, strict versioned scenario
+  settings, and scenario import/export with explicit command-line overrides.
+- Added canonical state fingerprints and complete versioned JSON checkpoint
+  export, including RNG, dynamic model fields, projectiles and temporal tactical
+  memoization. Rebuildable indexes and wall-clock measurements are excluded.
+  Restoration is tracked as update 006.
+- Rejected duplicate JSON keys, non-finite numbers, oversized or excessively
+  nested files, invalid byte limits before file reads, and invalid terrain
+  revisions before state encoding.
+- Recorded exactly 100 acceptance-based updates in ROADMAP.md, with separate
+  bug-fix, measured performance and validation passes after each five updates.
+- Filtered factions before casualty checks in repeated living-unit queries.
+  Seven alternating 900-tick, seed-42 Hard assault runs reduced median runtime
+  from 0.597 to 0.563 seconds (5.6%) with identical full state fingerprints.
+
 ## Unreleased — engine architecture
 
 - Replaced compressed runtime payloads and source concatenation with ordinary
