@@ -19,11 +19,14 @@ Scenario files describe initial settings, not the current battle state.
 ```python
 from engine.scenarios import Scenario
 from engine.state import state_fingerprint, save_checkpoint
+from engine.checkpoints import load_checkpoint
 
 scenario = Scenario(seed=42, mission="defense", player_roster=("Rifleman", "Medic"))
 game = scenario.create_game()
 print(state_fingerprint(game))
 save_checkpoint(game, "build/battle.json")
+restored = load_checkpoint("build/battle.json")
+assert state_fingerprint(restored) == state_fingerprint(game)
 ```
 
 Fingerprints include ordered dictionaries, RNG state, dynamic model fields, pending
@@ -37,5 +40,12 @@ Checkpoint export produces versioned, non-executable JSON with a SHA-256 integri
 digest, simulation source signature, runtime version and scenario metadata. Only
 explicit engine model types are encoded. Network sessions and unknown custom
 objects are rejected. The digest detects accidental damage; it is not an
-authentication mechanism. Restoration is the next tracked update and is not yet
-available in this checkpoint.
+authentication mechanism. Restoration validates the format, signature, runtime,
+model types, registered attributes, collections, coordinates and IDs before
+creating a new world. Invalid content never replaces an existing game. Python's
+implementation and major/minor version must match the saved battle. Saves from
+different simulation source are rejected explicitly; migrations are not inferred.
+
+Register new serialized game and Unit fields in `engine/state_fields.py` and add
+their value validation when extending the engine. Unknown attributes are rejected
+at export, so a typo cannot create a checkpoint that silently loses state.

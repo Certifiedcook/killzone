@@ -17,7 +17,7 @@ copy these modules unchanged rather than generating another implementation.
 | `engine.spatial` | `SpatialGrid`, deterministic snapshot-based point queries |
 | `engine.revisions` | Terrain revision state owned by one world |
 | `engine.scenarios` / `engine.content` | Strict versioned scenario settings and bounded JSON content loading |
-| `engine.state` | Canonical battle fingerprints and versioned checkpoint export |
+| `engine.state` / `engine.checkpoints` | Canonical fingerprints, versioned checkpoints and validated restoration |
 | `engine.cli` | Headless simulation reports and scenario import/export |
 | `engine.networking` | `NetworkGame`, authoritative commands, snapshots, and PvP rules |
 | `engine.frontend` | Desktop lifecycle, input, rendering, audio, and Pygame backend |
@@ -89,7 +89,8 @@ large. Static composition makes ownership reviewable, but does not by itself
 make every system independently replaceable.
 
 A fixed seed supports repeatable simulation under matching code, settings, and
-commands. Versioned checkpoint export and canonical state fingerprints are available;
-checkpoint restoration and replay are tracked next. See [ENGINE_TOOLS.md](ENGINE_TOOLS.md),
+commands. Versioned local checkpoints restore RNG, primary state and temporal
+tactical memoization, with canonical fingerprints verifying continuation. Replay
+is tracked next. See [ENGINE_TOOLS.md](ENGINE_TOOLS.md),
 [ROADMAP.md](ROADMAP.md) for prioritized extensions and
 [CONTRIBUTING.md](CONTRIBUTING.md) for validation contracts.

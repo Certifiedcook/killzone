@@ -1,13 +1,19 @@
 # Changelog
 
-## Unreleased — engine tools, updates 001–005
+## Unreleased — engine tools, updates 001–006
 
 - Added a headless simulation CLI with JSON reports, strict versioned scenario
   settings, and scenario import/export with explicit command-line overrides.
 - Added canonical state fingerprints and complete versioned JSON checkpoint
   export, including RNG, dynamic model fields, projectiles and temporal tactical
   memoization. Rebuildable indexes and wall-clock measurements are excluded.
-  Restoration is tracked as update 006.
+- Added validated checkpoint restoration with matching continued state hashes
+  across both missions, pending combat, wounds, queued orders and terrain edits.
+  Restored cells share one world revision tracker and indexes reference the
+  restored units; released casualty occupancy and temporal caches are preserved.
+- Checkpoint loading rejects incompatible versions/source/runtime, malformed
+  model and tactical records, unknown attributes, duplicate IDs, fractional
+  indexes and incorrectly typed dynamic combat fields before returning a world.
 - Rejected duplicate JSON keys, non-finite numbers, oversized or excessively
   nested files, invalid byte limits before file reads, and invalid terrain
   revisions before state encoding.

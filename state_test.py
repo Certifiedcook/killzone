@@ -31,7 +31,7 @@ class StateTest(unittest.TestCase):
         game = Scenario(seed=912).create_game()
         for _ in range(60):
             game.update(SIM_DT)
-        game.units[0].custom_counter = 7
+        game.units[0].wound_torso = 7.0
         checkpoint = export_checkpoint(game)
         self.assertEqual(
             json.loads(json.dumps(checkpoint, allow_nan=False)), checkpoint
@@ -45,7 +45,7 @@ class StateTest(unittest.TestCase):
         for name in ("_uid_index", "_ballistic_spatial", "_perf"):
             self.assertNotIn(name, fields)
         self.assertEqual(len(checkpoint["sha256"]), 64)
-        game.units[0].custom_counter += 1
+        game.units[0].wound_torso += 1
         self.assertNotEqual(export_checkpoint(game)["sha256"], checkpoint["sha256"])
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "save" / "battle.json"

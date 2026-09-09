@@ -17,6 +17,8 @@ from engine.revisions import TerrainRevision
 from engine.simulation import RealTimeGame
 from engine.scenarios import Scenario
 from engine.content import write_json
+from engine.state_fields import GAME_FIELDS, UNIT_FIELDS
+from dataclasses import fields as model_fields
 
 MODEL_TYPES = {
     cls.__name__: cls
@@ -87,6 +89,16 @@ def encode_value(value, *, location="state", _active=None):
             fields = vars(value).copy()
             if type(value) is models.Cell:
                 fields.pop("_revision_state", None)
+            allowed = (
+                UNIT_FIELDS
+                if type(value) is models.Unit
+                else {field.name for field in model_fields(value)}
+            )
+            unknown = fields.keys() - allowed
+            if unknown:
+                raise StateError(
+                    f"{location}: unregistered model attributes {sorted(unknown)!r}"
+                )
             return {"$type": type(value).__name__, "fields": encode(fields, "fields")}
         raise StateError(f"{location}: unsupported object type {type(value).__name__}")
     finally:
@@ -107,6 +119,9 @@ def capture_state(game):
     """Read a local world without consuming RNG, rebuilding caches or mutating it."""
     if type(game) is not RealTimeGame:
         raise StateError("state: only local RealTimeGame worlds are supported")
+    unknown = vars(game).keys() - TRANSIENT_FIELDS - GAME_FIELDS
+    if unknown:
+        raise StateError(f"state: unregistered game attributes {sorted(unknown)!r}")
     return encode_value(
         {key: value for key, value in vars(game).items() if key not in TRANSIENT_FIELDS}
     )

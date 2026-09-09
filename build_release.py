@@ -35,6 +35,7 @@ SUPPORT_FILES = (
     "engine_cli_test.py",
     "scenario_test.py",
     "state_test.py",
+    "checkpoint_test.py",
     "ARCHITECTURE.md",
     "ENGINE_TOOLS.md",
     "ROADMAP.md",

@@ -50,7 +50,7 @@ string, or runtime method-patching layer is required.
 | Tests | Coverage |
 | --- | --- |
 | `engine_test.py` | Engine/module boundaries and world isolation |
-| `engine_cli_test.py`, `scenario_test.py`, `state_test.py` | Headless tools, strict content, fingerprints and checkpoints |
+| `engine_cli_test.py`, `scenario_test.py`, `state_test.py`, `checkpoint_test.py` | Headless tools, strict content, fingerprints and continued save/resume equivalence |
 | `clock_test.py`, `spatial_test.py` | Scheduler and spatial-query contracts |
 | `performance_test.py`, `benchmark_test.py` | Optimization correctness and benchmark behavior |
 | `self_test.py`, `regression_test.py` | Historical model and current maintenance regressions |

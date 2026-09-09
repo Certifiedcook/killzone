@@ -10,7 +10,7 @@ and frontend code have separate modules, and development and release builds
 use the same source files. See [ARCHITECTURE.md](ARCHITECTURE.md) for the
 boundaries and remaining limitations, and [ROADMAP.md](ROADMAP.md) for proposed
 additions. [ENGINE_TOOLS.md](ENGINE_TOOLS.md) covers headless simulation, validated
-scenario import/export, state fingerprints and checkpoint export.
+scenario import/export, state fingerprints and the checkpoint save/resume API.
 
 ## Play
 
